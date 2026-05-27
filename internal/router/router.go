@@ -5,9 +5,10 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"path"
 	"strings"
 	"unicode"
-    "unicode/utf8"
+	"unicode/utf8"
 
 	"github.com/RED-Collective/red-engine/internal/render"
 	"github.com/RED-Collective/red-engine/internal/store"
@@ -27,7 +28,7 @@ func New(s *store.Store, siteName string) http.Handler {
 
 	staticFS, err := fs.Sub(files, "static")
 	if err != nil {
-	    panic(err)
+		panic(err)
 	}
 
 	h := &handler{store: s, tmpl: tmpl, siteName: siteName}
@@ -55,8 +56,8 @@ type pageData struct {
 }
 
 func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
-	parts := strings.Split(strings.Trim(path, "/"), "/")
+	cleanPath := path.Clean(r.URL.Path)
+	parts := strings.Split(strings.Trim(cleanPath, "/"), "/")
 	topCat := ""
 	if parts[0] != "" {
 		topCat = parts[0]
@@ -65,13 +66,13 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
 	d := pageData{
 		Site:   h.siteName,
 		Nav:    h.store.Root(),
-		Path:   path,
+		Path:   cleanPath,
 		TopCat: topCat,
 	}
 
 	switch {
-	case path == "/":
-		d.Body = template.HTML(`<div class="article"><h1>` + h.siteName + `</h1><p>The free practical knowledge base. Choose a topic from the sidebar.</p></div>`)
+	case cleanPath == "/":
+		d.Body = template.HTML(`<div class="article"><h1>` + template.HTMLEscapeString(h.siteName) + `</h1><p>The free practical knowledge base. Choose a topic from the sidebar.</p></div>`)
 
 	case len(parts) == 1 && topCat != "":
 		sec, ok := h.store.Root()[topCat]
@@ -84,7 +85,7 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
 		d.Body = template.HTML(sectionHTML(sec))
 
 	default:
-		raw, ok := h.store.Resolve(path)
+		raw, ok := h.store.Resolve(cleanPath)
 		if !ok {
 			http.NotFound(w, r)
 			return
@@ -100,17 +101,22 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.tmpl.Execute(w, d); err != nil {
-    	http.Error(w, "template error", 500)
-    	return
+		http.Error(w, "template error", 500)
+		return
 	}
 }
 
 func (h *handler) reload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-    	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-    	return
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
-	
+
+	if !strings.HasPrefix(r.RemoteAddr, "127.0.0.1:") && !strings.HasPrefix(r.RemoteAddr, "[::1]:") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
 	if err := h.store.Reload(); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -120,17 +126,15 @@ func (h *handler) reload(w http.ResponseWriter, r *http.Request) {
 
 func sectionHTML(sec *store.Section) string {
 	var b strings.Builder
-	b.WriteString(`<div class="section-index"><h1>` + cap(sec.Name) + `</h1>`)
-	// open/close ul once around all articles
-	b.WriteString(`<ul>`)
+	b.WriteString(`<div class="section-index"><h1>` + template.HTMLEscapeString(cap(sec.Name)) + `</h1><ul>`)
 	for _, a := range sec.Articles {
-	    b.WriteString(`<li><a href="` + a.Path + `">` + a.Title + `</a></li>`)
+		b.WriteString(`<li><a href="` + template.HTMLEscapeString(a.Path) + `">` + template.HTMLEscapeString(a.Title) + `</a></li>`)
 	}
 	b.WriteString(`</ul>`)
 	for _, sub := range sec.Sub {
-		b.WriteString(`<h2>` + cap(sub.Name) + `</h2><ul>`)
+		b.WriteString(`<h2>` + template.HTMLEscapeString(cap(sub.Name)) + `</h2><ul>`)
 		for _, a := range sub.Articles {
-			b.WriteString(`<li><a href="` + a.Path + `">` + a.Title + `</a></li>`)
+			b.WriteString(`<li><a href="` + template.HTMLEscapeString(a.Path) + `">` + template.HTMLEscapeString(a.Title) + `</a></li>`)
 		}
 		b.WriteString(`</ul>`)
 	}
@@ -140,20 +144,20 @@ func sectionHTML(sec *store.Section) string {
 
 func buildCrumbs(parts []string) []crumb {
 	crumbs := make([]crumb, 0, len(parts))
-	path := ""
+	pPath := ""
 	for _, p := range parts {
-		path += "/" + p
-		crumbs = append(crumbs, crumb{Label: cap(p), Path: path})
+		pPath += "/" + p
+		crumbs = append(crumbs, crumb{Label: cap(p), Path: pPath})
 	}
 	return crumbs
 }
 
 func cap(s string) string {
-    s = strings.ReplaceAll(s, "-", " ")
-    s = strings.ReplaceAll(s, "_", " ")
-    if s == "" {
-        return s
-    }
-    r, size := utf8.DecodeRuneInString(s)
-    return string(unicode.ToUpper(r)) + s[size:]
+	s = strings.ReplaceAll(s, "-", " ")
+	s = strings.ReplaceAll(s, "_", " ")
+	if s == "" {
+		return s
+	}
+	r, size := utf8.DecodeRuneInString(s)
+	return string(unicode.ToUpper(r)) + s[size:]
 }
