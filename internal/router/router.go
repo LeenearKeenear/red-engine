@@ -119,23 +119,29 @@ func (h *handler) reload(w http.ResponseWriter, r *http.Request) {
 }
 
 func sectionHTML(sec *store.Section) string {
-	var b strings.Builder
-	b.WriteString(`<div class="section-index"><h1>` + cap(sec.Name) + `</h1>`)
-	// open/close ul once around all articles
-	b.WriteString(`<ul>`)
-	for _, a := range sec.Articles {
-	    b.WriteString(`<li><a href="` + a.Path + `">` + a.Title + `</a></li>`)
-	}
-	b.WriteString(`</ul>`)
-	for _, sub := range sec.Sub {
-		b.WriteString(`<h2>` + cap(sub.Name) + `</h2><ul>`)
-		for _, a := range sub.Articles {
-			b.WriteString(`<li><a href="` + a.Path + `">` + a.Title + `</a></li>`)
-		}
-		b.WriteString(`</ul>`)
-	}
-	b.WriteString(`</div>`)
-	return b.String()
+    var b strings.Builder
+    b.WriteString(`<div class="section-index"><h1>` + template.HTMLEscapeString(cap(sec.Name)) + `</h1>`)
+    b.WriteString(`<ul>`)
+    for _, a := range sec.Articles {
+        b.WriteString(`<li><a href="` + safeHref(a.Path) + `">` + template.HTMLEscapeString(a.Title) + `</a></li>`)
+    }
+    b.WriteString(`</ul>`)
+    for _, sub := range sec.Sub {
+        b.WriteString(`<h2>` + template.HTMLEscapeString(cap(sub.Name)) + `</h2><ul>`)
+        for _, a := range sub.Articles {
+            b.WriteString(`<li><a href="` + safeHref(a.Path) + `">` + template.HTMLEscapeString(a.Title) + `</a></li>`)
+        }
+        b.WriteString(`</ul>`)
+    }
+    b.WriteString(`</div>`)
+    return b.String()
+}
+
+func safeHref(path string) string {
+    if !strings.HasPrefix(path, "/") {
+        return "#"
+    }
+    return template.HTMLEscapeString(path)
 }
 
 func buildCrumbs(parts []string) []crumb {
