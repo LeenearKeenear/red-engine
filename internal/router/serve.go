@@ -75,6 +75,7 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "template error: "+err.Error(), 500)
 		return
 	}
+  }
 }
 
 func sectionHTML(sec *store.Section) string {
