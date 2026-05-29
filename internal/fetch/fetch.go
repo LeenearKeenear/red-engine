@@ -13,6 +13,19 @@ import (
 )
 
 func Pull(url, srcType, destDir string) error {
+	// --- NEW: Native Git Intercept ---
+	if srcType == "git" {
+		_, err := pullGit(url, destDir)
+		return err
+	}
+	if srcType == "raw" {
+		// Single file download logic is handled by the caller (router/sync.go)
+		// but we return nil here to satisfy the interface if called directly.
+		return nil
+	}
+
+	// ---------------------------------
+
 	resp, err := http.Get(url)
 	if err != nil {
 		return err
@@ -42,6 +55,19 @@ func Pull(url, srcType, destDir string) error {
 	default:
 		return fmt.Errorf("fetch: unsupported type %q", srcType)
 	}
+}
+
+// PullDelta is specifically designed for Webhooks. It attempts to return the exact
+// list of changed files to allow for granular memory hot-reloading.
+func PullDelta(url, srcType, destDir string) ([]string, error) {
+	if srcType == "git" {
+		return pullGit(url, destDir)
+	}
+
+	// Fallback for zip/tar files.
+	// We extract everything, so we return 'nil' to force a full memory reload.
+	err := Pull(url, srcType, destDir)
+	return nil, err
 }
 
 func extractTarGz(src, dest string) error {

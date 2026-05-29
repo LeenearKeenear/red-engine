@@ -31,6 +31,11 @@ if (-Not (Test-Path ".\data")) {
     Write-Host "[*] .\data directory already exists."
 }
 
+# FIX: Prevent container permission-denied errors by ensuring the 
+# restricted 'reduser' inside the container can write to the host volume.
+Write-Host "[*] Setting universal read/write permissions on .\data..." -ForegroundColor Cyan
+icacls ".\data" /grant "Everyone:(OI)(CI)F" /T | Out-Null
+
 if (-Not (Test-Path "config.json")) {
     Write-Host "[*] Generating default config.json..."
 
@@ -41,7 +46,7 @@ if (-Not (Test-Path "config.json")) {
     $DefaultConfig = @{
         addr = ":8080"
         siteName = "RED Engine"
-        dataDir = "/app/data"
+        dataDir = "data"
         adminToken = $NewToken
         startupSync = @()
     }
@@ -111,3 +116,4 @@ Write-Host "✅ Installation Complete!" -ForegroundColor Green
 Write-Host "🌐 Your node is running at: http://${HostIP}:${ConfigPort}"
 Write-Host "⚙️  Admin Panel: http://${HostIP}:${ConfigPort}/-/admin"
 Write-Host "========================================" -ForegroundColor Cyan
+

@@ -11,13 +11,14 @@ type RemoteSync struct {
 }
 
 type Config struct {
-	Addr        string       `json:"addr"`
-	SiteName    string       `json:"siteName"`
-	DataDir     string       `json:"dataDir"`
-	SourceURL   string       `json:"sourceURL"`
-	SourceType  string       `json:"sourceType"`  // e.g., "tar.gz", "zip"
-	AdminToken  string       `json:"adminToken"`  // NEW: Security Token
-	StartupSync []RemoteSync `json:"startupSync"` // Ported from Legacy Gateway
+	Addr          string       `json:"addr"`
+	SiteName      string       `json:"siteName"`
+	DataDir       string       `json:"dataDir"`
+	SourceURL     string       `json:"sourceURL"`
+	SourceType    string       `json:"sourceType"`
+	AdminToken    string       `json:"adminToken"`
+	WebhookSecret string       `json:"webhookSecret"` // NEW: GitHub Signature Key
+	StartupSync   []RemoteSync `json:"startupSync"`
 }
 
 func Default() Config {

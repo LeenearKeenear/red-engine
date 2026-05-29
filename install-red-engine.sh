@@ -1,4 +1,12 @@
 #!/bin/bash
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
+    echo "⚠️ Warning: Automated cron backups are only supported on Linux/WSL."
+    echo "   Skipping backup configuration."
+    # skip the cron prompt
+else
+    # Run the backup prompt here...
+fi
+
 echo "========================================"
 echo "🚀 Installing RED Engine..."
 echo "========================================"
@@ -31,6 +39,11 @@ else
     echo "[*] ./data directory already exists."
 fi
 
+# FIX: Prevent container permission-denied errors by ensuring the 
+# restricted 'reduser' inside the container can write to the host volume.
+echo "[*] Setting universal read/write permissions on ./data..."
+chmod 777 ./data
+
 if [ ! -f "config.json" ]; then
     echo "[*] Generating default config.json..."
     NEW_TOKEN=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 24 | head -n 1)
@@ -39,7 +52,7 @@ if [ ! -f "config.json" ]; then
 {
   "addr": ":8080",
   "siteName": "RED Engine",
-  "dataDir": "/app/data",
+  "dataDir": "data",
   "adminToken": "$NEW_TOKEN",
   "startupSync": []
 }
@@ -122,3 +135,25 @@ echo "✅ Installation Complete!"
 echo "🌐 Your node is running at: http://${HOST_IP}:${CONFIG_PORT}"
 echo "⚙️  Admin Panel: http://${HOST_IP}:${CONFIG_PORT}/-/admin"
 echo "========================================"
+
+# --- Automated Backup Setup ---
+echo ""
+read -p "Would you like to set up daily automatic backups? [Y/n] " response
+case "$response" in
+    [yY][eE][sS]|[yY]|"") 
+        # Define absolute path to this project directory
+        PROJECT_PATH=$(pwd)
+        CRON_JOB="0 3 * * * $PROJECT_PATH/backup-data.sh"
+        
+        # Check if the cron job already exists to avoid duplicates
+        if crontab -l | grep -q "$PROJECT_PATH/backup-data.sh"; then
+            echo "[*] Backup cron job already exists."
+        else
+            (crontab -l 2>/dev/null; echo "$CRON_JOB") | crontab -
+            echo "[*] Backup cron job installed (Runs daily at 03:00)."
+        fi
+        ;;
+    *)
+        echo "[*] Backups skipped."
+        ;;
+esac
