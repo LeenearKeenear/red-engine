@@ -7,11 +7,11 @@
   "adminToken": "Unq1ZOmCICydwDRuQmBMfY1p",
   "startupSync": [
     {
-      "url": "https://github.com/mundimark/awesome-markdown/archive/HEAD.zip",
+      "url": "https://github.com/mundimark/awesome-markdown.git",
       "filename": "Awesome Markdown"
     },
     {
-      "url": "https://github.com/StandardCodebase/test-auth/archive/HEAD.zip",
+      "url": "https://github.com/StandardCodebase/test-auth.git",
       "filename": "test-auth"
     }
   ]

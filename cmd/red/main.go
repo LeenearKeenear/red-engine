@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -42,39 +41,76 @@ func main() {
 			log.Fatalf("fetch: %v", err)
 		}
 	}
+
 	s := store.New(cfg.DataDir)
 	if err := s.Reload(); err != nil {
 		log.Fatalf("store: %v", err)
 	}
+
 	// 2. Startup & Background Sync
 	if len(cfg.StartupSync) > 0 {
-		client := &http.Client{Timeout: 15 * time.Second}
-
 		// Initial Boot Sync
 		for _, sync := range cfg.StartupSync {
 			cleanName := filepath.Base(filepath.Clean(sync.Filename))
-			destPath := filepath.Join(cfg.DataDir, cleanName)
+			destDir := filepath.Join(cfg.DataDir, cleanName)
 			log.Printf("Startup Sync: Fetching %s...", cleanName)
 
-			if err := executeSync(client, sync.URL, destPath); err != nil {
+			srcType := "raw"
+			lowerURL := strings.ToLower(sync.URL)
+			if strings.HasSuffix(lowerURL, ".git") {
+				srcType = "git"
+			} else if strings.HasSuffix(lowerURL, ".tar.gz") {
+				srcType = "tar.gz"
+			} else if strings.HasSuffix(lowerURL, ".zip") {
+				srcType = "zip"
+			}
+
+			if err := fetch.Pull(sync.URL, srcType, destDir); err != nil {
 				log.Printf("Startup Sync Error (%s): %v", sync.Filename, err)
 			}
 		}
 
-		// Background Polling Loop (Runs every 5 minutes)
+		// Force memory update after initial boot downloads
+		s.Reload()
+
+		// Background Smart Polling Loop (Runs every 1 minute)
 		go func() {
 			ticker := time.NewTicker(1 * time.Minute)
 			defer ticker.Stop()
 			for range ticker.C {
 				for _, sync := range cfg.StartupSync {
 					cleanName := filepath.Base(filepath.Clean(sync.Filename))
-					destPath := filepath.Join(cfg.DataDir, cleanName)
-					if err := executeSync(client, sync.URL, destPath); err != nil {
-						log.Printf("Background Sync Error: %v", err)
+					destDir := filepath.Join(cfg.DataDir, cleanName)
+
+					srcType := "raw"
+					lowerURL := strings.ToLower(sync.URL)
+					if strings.HasSuffix(lowerURL, ".git") {
+						srcType = "git"
+					} else if strings.HasSuffix(lowerURL, ".tar.gz") {
+						srcType = "tar.gz"
+					} else if strings.HasSuffix(lowerURL, ".zip") {
+						srcType = "zip"
+					}
+
+					// Use PullDelta so we only process actual changes
+					changedFiles, err := fetch.PullDelta(sync.URL, srcType, destDir)
+					if err != nil {
+						log.Printf("Background Sync Error (%s): %v", sync.Filename, err)
+						continue
+					}
+
+					// Apply Granular Memory Cache Invalidation silently
+					if changedFiles == nil {
+						// nil means a full ZIP extract happened or a fresh clone
+						s.Reload()
+					} else if len(changedFiles) > 0 {
+						log.Printf("⚡ Background Sync: Hot-Patching %d modified files...", len(changedFiles))
+						if err := s.UpdateFiles(changedFiles); err != nil {
+							log.Printf("⚠️ Partial hot-reload failed, falling back to full reload: %v", err)
+							s.Reload()
+						}
 					}
 				}
-				// Force memory update after downloads
-				s.Reload()
 			}
 		}()
 	}
@@ -88,45 +124,4 @@ func main() {
 	h := router.New(s, &cfg, *cfgPath)
 	log.Printf("RED listening on %s", cfg.Addr)
 	log.Fatal(http.ListenAndServe(cfg.Addr, h))
-}
-
-func executeSync(client *http.Client, targetURL, destPath string) error {
-	lowerURL := strings.ToLower(targetURL)
-
-	if strings.HasSuffix(lowerURL, ".tar.gz") || strings.HasSuffix(lowerURL, ".zip") {
-		srcType := "tar.gz"
-		if strings.HasSuffix(lowerURL, ".zip") {
-			srcType = "zip"
-		}
-		return fetch.Pull(targetURL, srcType, destPath)
-	}
-
-	req, err := http.NewRequest(http.MethodGet, targetURL, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", "RED-Engine-Startup-Sync/1.0")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return os.ErrPermission
-	}
-
-	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-		return err
-	}
-
-	outFile, err := os.Create(destPath)
-	if err != nil {
-		return err
-	}
-	defer outFile.Close()
-
-	_, err = io.Copy(outFile, resp.Body)
-	return err
 }
