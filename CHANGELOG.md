@@ -1,40 +1,19 @@
-# Changelog
-
-All notable changes to the `red-engine` project are documented in this file. This version marks a significant architectural shift from the initial `project-red` codebase to the current modular `red-engine` framework.
-
-## [2.0.0] - Architecture Overhaul (Current Release)
-
-This release represents a complete refactoring of the internal structure to improve modularity, maintainability, and scalability.
-
-### Changed (Architectural Improvements)
-- **Project Structure**: Relocated the entry point from the project root to `cmd/red/main.go` to follow standard Go project layouts.
-- **Routing Engine**: Completely replaced the basic `internal/handler` structure with a comprehensive `internal/router` package. Routing is now decoupled into specific responsibilities:
-    - `api.go`: Handles API-specific endpoints.
-    - `raw.go`: Manages raw file/data access.
-    - `serve.go`: Dedicated to serving HTTP responses.
-    - `sync.go`: Manages synchronization logic.
-    - `router.go`: Centralized router initialization.
-- **Rendering**: Enhanced the `internal/render` package to better support the new routing structure and template rendering requirements.
+## [Unreleased] - 2026-05-29
 
 ### Added
-- **`internal/fetch`**: New module dedicated to fetching remote or local data, enabling the synchronization features.
-- **`internal/store`**: New persistent storage interface, replacing ad-hoc file handling with a defined store implementation.
-- **Infrastructure & DevOps**:
-    - **Caddy Integration**: Added `caddy_routing/Caddyfile` for robust web server configuration and reverse proxying.
-    - **Deployment Scripts**: Added `install-red-engine.sh` and `install-red-engine.ps1` for automated setup on Linux and Windows environments.
-    - **Token Management**: Added `manage-token.sh` and `manage-token.ps1` to handle authentication tokens securely.
-    - **CI/CD**: Introduced GitHub Actions workflows (`.github/workflows/discord.yml`) for automated notifications.
-    - **Docker Support**: Updated `Dockerfile` and `docker-compose.yml` for containerized development and production deployment.
+- **Native Git Engine:** Integrated `go-git/go-git/v5` for true delta-pulling and cloning, eliminating the engine's reliance on host OS shell commands and bypassing container permission traps.
+- **Granular Memory Hot-Reloading:** Added `Store.UpdateFiles(changedPaths []string)` to surgically patch the active memory map. The engine now drops and re-renders only the specific files modified in a commit or local save, eliminating CPU spikes and full-site downtime during syncs.
+- **Smart Webhook Routing:** Added intelligent JSON payload parsing to the `/-/webhook/sync` endpoint. Webhooks now extract the origin URL and only trigger delta-pulls for matching repositories.
+- **Container-Safe Local Polling:** Added `radovskyb/watcher` to bypass Docker/Podman hypervisor limitations where `inotify` events fail to cross into the container.
 
-### Removed
-- **Legacy Packages**: Removed `internal/fs` and `internal/handler` as their functionality has been superseded by the `internal/router` and `internal/store` modules.
+### Changed
+- **Replaced `fsnotify`:** Local file watching is now handled by a 2-second interval background poller, which directly feeds into the new granular memory hot-reloading module.
+- **Silent Background Poller:** Refactored the 1-minute brute force loop in `cmd/red/main.go`. It now uses `fetch.PullDelta` to silently check for remote Git changes without downloading entire repository archives.
+- **Installation Scripts:** Updated `install-red-engine.sh` and `install-red-engine.ps1` to automatically assign global read/write permissions (`chmod 777` and `icacls Everyone`) to the `data/` volume. 
+- **Docker Dependencies:** Updated `Dockerfile` to install `ca-certificates`, `git`, and `openssh` directly into the Alpine container for native Git support.
 
----
-
-*The baseline architecture providing the foundation for the current rewrite.*
-
-### Core Components
-- Root-level `main.go` entry point.
-- Simple `internal/config` and `internal/fs` modules.
-- Basic handler architecture (`internal/handler`).
-- Static asset serving via standard directory structure.
+### Fixed
+- **Podman Permission Trap:** Prevented the restricted `reduser` (UID 1000) from being locked out of the `data/` directory when the host machine auto-creates missing volume mounts as `root`.
+- **Mutex Panic in Store:** Fixed a fatal runtime concurrency bug in `store.go` where a deferred `mu.Unlock()` would cause a panic if security definitions (`manifest.json` or `contributors.json`) were modified.
+- **Webhook Global Loop Bug:** Fixed an issue where a single webhook ping would force the engine to blindly re-download every tracked repository in the configuration list.
+- **ZIP Archive Loop Bug:** Changed default URLs in `config.json` from `/archive/HEAD.zip` to `.git` to prevent the background sync from repeatedly destroying and recreating directories every 60 seconds.
