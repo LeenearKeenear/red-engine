@@ -349,7 +349,6 @@ func (s *Store) BuildSearchIndex() []SearchItem {
 	}
 	sort.Strings(keys)
 
-	// Iterate using the sorted keys
 	for _, k := range keys {
 		walk(s.nav[k], "")
 	}
@@ -442,7 +441,6 @@ func (s *Store) removeFromMap(nav map[string]*models.Section, parts []string) {
 		}
 	}
 }
-
 func (s *Store) Get(path string) *models.Article {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

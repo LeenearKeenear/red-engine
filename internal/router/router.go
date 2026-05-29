@@ -1,6 +1,7 @@
 package router
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
 	"html/template"

@@ -89,7 +89,12 @@ func main() {
 			ticker := time.NewTicker(1 * time.Minute)
 			defer ticker.Stop()
 			for range ticker.C {
-				for _, sync := range cfg.StartupSync {
+				cfg.Mu.RLock()
+				syncList := make([]config.RemoteSync, len(cfg.StartupSync))
+				copy(syncList, cfg.StartupSync)
+				cfg.Mu.RUnlock()
+
+				for _, sync := range syncList {
 					cleanName := filepath.Base(filepath.Clean(sync.Filename))
 					destDir := filepath.Join(cfg.DataDir, cleanName)
 
