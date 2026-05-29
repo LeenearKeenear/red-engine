@@ -2,20 +2,21 @@ package router
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 )
 
 func (h *handler) health(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write([]byte("OK")); err != nil {
-		h.logger.Warnf("health: write error: %v", err)
+		log.Printf("⚠️ health: write error: %v", err)
 	}
 }
 
 func (h *handler) manifest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if _, err := w.Write([]byte(`{"name":"RED Engine","short_name":"RED","start_url":"/","display":"standalone"}`)); err != nil {
-		h.logger.Warnf("manifest: write error: %v", err)
+		log.Printf("⚠️ manifest: write error: %v", err)
 	}
 }
 
@@ -42,6 +43,6 @@ func (h *handler) searchIndex(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	if _, err = w.Write(payload); err != nil {
-		h.logger.Warnf("searchIndex: write error: %v", err)
+		log.Printf("⚠️ searchIndex: write error: %v", err)
 	}
 }
