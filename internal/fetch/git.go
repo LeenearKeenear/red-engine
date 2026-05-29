@@ -4,61 +4,81 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
+
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 )
 
-// pullGit handles native cloning and aggressive hard-resetting of git repositories
-func pullGit(url, destDir string) error {
-	gitDir := filepath.Join(destDir, ".git")
-
-	// 1. Check if the directory is already a cloned repository
-	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
-		log.Printf("📥 Native Git: Cloning fresh repository into %s...", destDir)
-
-		// Ensure parent directories exist
-		if err := os.MkdirAll(filepath.Dir(destDir), 0755); err != nil {
-			return err
+// pullGit now returns a slice of exact file paths that were modified during the sync.
+func pullGit(url, destDir string) ([]string, error) {
+	repo, err := git.PlainOpen(destDir)
+	if err != nil {
+		if err == git.ErrRepositoryNotExists {
+			log.Printf("📥 Native go-git: Cloning fresh repository into %s...", destDir)
+			if err := os.MkdirAll(destDir, 0755); err != nil {
+				return nil, err
+			}
+			_, err = git.PlainClone(destDir, false, &git.CloneOptions{
+				URL:      url,
+				Progress: os.Stdout,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("go-git clone failed: %v", err)
+			}
+			// Returning a nil slice tells the router "Everything is new, do a full reload"
+			return nil, nil
 		}
+		return nil, fmt.Errorf("failed to check existing repository: %v", err)
+	}
 
-		cmd := exec.Command("git", "clone", url, destDir)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("git clone failed: %v", err)
+	log.Printf("🔄 Native go-git: Checking for delta updates at %s...", destDir)
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get git worktree: %v", err)
+	}
+
+	// 1. Capture the commit hash BEFORE the pull
+	var oldHash plumbing.Hash
+	if head, err := repo.Head(); err == nil {
+		oldHash = head.Hash()
+	}
+
+	err = worktree.Pull(&git.PullOptions{
+		RemoteName: "origin",
+		Force:      true,
+		Progress:   os.Stdout,
+	})
+
+	if err != nil {
+		if err == git.NoErrAlreadyUpToDate {
+			log.Printf("✅ Sync skipped: %s is already up to date.", destDir)
+			return []string{}, nil // Empty slice means 0 files changed
 		}
-		return nil
+		return nil, fmt.Errorf("go-git delta pull failed: %v", err)
 	}
 
-	// 2. If it already exists, aggressively sync it to mirror the remote state
-	log.Printf("🔄 Native Git: Syncing existing repository at %s...", destDir)
+	var changedFiles []string
 
-	// Fetch latest changes from remote without merging
-	fetchCmd := exec.Command("git", "fetch", "origin")
-	fetchCmd.Dir = destDir
-	fetchCmd.Stdout = os.Stdout
-	fetchCmd.Stderr = os.Stderr
-	if err := fetchCmd.Run(); err != nil {
-		return fmt.Errorf("git fetch failed: %v", err)
+	// 2. Capture the commit hash AFTER the pull and calculate the diff
+	if head, err := repo.Head(); err == nil {
+		newHash := head.Hash()
+		if oldHash != plumbing.ZeroHash && oldHash != newHash {
+			oldCommit, err1 := repo.CommitObject(oldHash)
+			newCommit, err2 := repo.CommitObject(newHash)
+			if err1 == nil && err2 == nil {
+				patch, err3 := oldCommit.Patch(newCommit)
+				if err3 == nil {
+					for _, fileStat := range patch.Stats() {
+						// go-git returns relative paths (e.g., "docs/guide.md"). Convert to absolute.
+						fullPath := filepath.Join(destDir, fileStat.Name)
+						changedFiles = append(changedFiles, fullPath)
+					}
+				}
+			}
+		}
 	}
 
-	// Hard reset to the exact state of what was just fetched (handles reverts natively)
-	resetCmd := exec.Command("git", "reset", "--hard", "FETCH_HEAD")
-	resetCmd.Dir = destDir
-	resetCmd.Stdout = os.Stdout
-	resetCmd.Stderr = os.Stderr
-	if err := resetCmd.Run(); err != nil {
-		return fmt.Errorf("git reset failed: %v", err)
-	}
-
-	// Clean out any untracked files or directories (handles file deletions natively)
-	cleanCmd := exec.Command("git", "clean", "-fd")
-	cleanCmd.Dir = destDir
-	cleanCmd.Stdout = os.Stdout
-	cleanCmd.Stderr = os.Stderr
-	if err := cleanCmd.Run(); err != nil {
-		log.Printf("⚠️ Native Git: Warning during git clean: %v", err)
-	}
-
-	return nil
+	log.Printf("✅ Native go-git: Applied delta updates to %s (%d files changed)", destDir, len(changedFiles))
+	return changedFiles, nil
 }

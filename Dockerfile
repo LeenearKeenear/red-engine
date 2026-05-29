@@ -8,8 +8,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /red-engine ./cmd/red/
 
 # Stage 2: Construct the bare execution container
 FROM alpine:latest
-RUN apk --no-cache add ca-certificates
-
+RUN apk --no-cache add ca-certificates git openssh
 # FIX: Create the non-root user with a fixed UID/GID of 1000
 RUN addgroup -g 1000 redgroup && \
     adduser -u 1000 -G redgroup -s /bin/sh -D reduser
