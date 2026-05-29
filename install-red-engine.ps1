@@ -116,3 +116,4 @@ Write-Host "✅ Installation Complete!" -ForegroundColor Green
 Write-Host "🌐 Your node is running at: http://${HostIP}:${ConfigPort}"
 Write-Host "⚙️  Admin Panel: http://${HostIP}:${ConfigPort}/-/admin"
 Write-Host "========================================" -ForegroundColor Cyan
+

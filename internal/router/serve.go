@@ -56,6 +56,7 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
 		d.Body = template.HTML(sectionHTML(sec))
 
 	default:
+		// First, check if the requested path is a markdown Article
 		art := h.store.Get(path)
 		if art == nil {
 			if strings.HasSuffix(path, ".md") {
@@ -64,18 +65,27 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if art == nil {
-			http.NotFound(w, r)
-			return
+		if art != nil {
+			d.Title = capitalize(parts[len(parts)-1])
+			d.Crumb = buildCrumbs(parts)
+			d.Body = art.Body
+			d.Verified = art.Verified
+			d.Author = art.Author
+			d.Hash = art.Hash
+			d.VerificationError = art.VerificationError
+		} else {
+			// NEW: If it's not an article, check if it's a Sub-Directory!
+			sec := h.store.GetSection(path)
+			if sec != nil {
+				d.Title = capitalize(parts[len(parts)-1])
+				d.Crumb = buildCrumbs(parts)
+				d.Body = template.HTML(sectionHTML(sec))
+			} else {
+				// If neither file nor folder exists, return 404
+				http.NotFound(w, r)
+				return
+			}
 		}
-
-		d.Title = capitalize(parts[len(parts)-1])
-		d.Crumb = buildCrumbs(parts)
-		d.Body = art.Body
-		d.Verified = art.Verified
-		d.Author = art.Author
-		d.Hash = art.Hash
-		d.VerificationError = art.VerificationError
 	}
 
 	if err := h.tmpl.ExecuteTemplate(w, "base.html", d); err != nil {

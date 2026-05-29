@@ -5,7 +5,7 @@ red
 
 data/
 test-integrity.sh
-set-ports.sh
+fix-ports.sh
 
 .github/discord.yml
 
