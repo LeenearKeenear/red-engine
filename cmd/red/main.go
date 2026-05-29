@@ -48,27 +48,30 @@ func main() {
 	}
 
 	// 2. Startup & Background Sync
+
 	if len(cfg.StartupSync) > 0 {
 		// Initial Boot Sync
-		for _, sync := range cfg.StartupSync {
-			cleanName := filepath.Base(filepath.Clean(sync.Filename))
-			destDir := filepath.Join(cfg.DataDir, cleanName)
-			log.Printf("Startup Sync: Fetching %s...", cleanName)
+		go func() {
+			for _, sync := range cfg.StartupSync {
+				cleanName := filepath.Base(filepath.Clean(sync.Filename))
+				destDir := filepath.Join(cfg.DataDir, cleanName)
+				log.Printf("Startup Sync: Fetching %s...", cleanName)
 
-			srcType := "raw"
-			lowerURL := strings.ToLower(sync.URL)
-			if strings.HasSuffix(lowerURL, ".git") {
-				srcType = "git"
-			} else if strings.HasSuffix(lowerURL, ".tar.gz") {
-				srcType = "tar.gz"
-			} else if strings.HasSuffix(lowerURL, ".zip") {
-				srcType = "zip"
-			}
+				srcType := "raw"
+				lowerURL := strings.ToLower(sync.URL)
+				if strings.HasSuffix(lowerURL, ".git") {
+					srcType = "git"
+				} else if strings.HasSuffix(lowerURL, ".tar.gz") {
+					srcType = "tar.gz"
+				} else if strings.HasSuffix(lowerURL, ".zip") {
+					srcType = "zip"
+				}
 
-			if err := fetch.Pull(sync.URL, srcType, destDir); err != nil {
-				log.Printf("Startup Sync Error (%s): %v", sync.Filename, err)
+				if err := fetch.Pull(sync.URL, srcType, destDir); err != nil {
+					log.Printf("Startup Sync Error (%s): %v", sync.Filename, err)
+				}
 			}
-		}
+		}()
 
 		// Force memory update after initial boot downloads
 		s.Reload()

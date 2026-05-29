@@ -1,7 +1,11 @@
 package router
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -10,7 +14,6 @@ import (
 	"github.com/RED-Collective/red-engine/internal/fetch"
 )
 
-// githubWebhookPayload represents the minimal structure we need to extract the repository URL
 type githubWebhookPayload struct {
 	Repository struct {
 		HTMLURL  string `json:"html_url"`
@@ -18,12 +21,25 @@ type githubWebhookPayload struct {
 	} `json:"repository"`
 }
 
-// normalizeURL strips trailing slashes and .git extensions for robust matching
 func normalizeURL(u string) string {
 	u = strings.ToLower(strings.TrimSpace(u))
 	u = strings.TrimSuffix(u, "/")
 	u = strings.TrimSuffix(u, ".git")
 	return u
+}
+
+// verifySignature strictly checks the X-Hub-Signature-256 header against the request body
+func verifySignature(secret string, payload []byte, signatureHeader string) bool {
+	if !strings.HasPrefix(signatureHeader, "sha256=") {
+		return false
+	}
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(payload)
+	expectedMAC := mac.Sum(nil)
+	expectedSignature := "sha256=" + hex.EncodeToString(expectedMAC)
+
+	return hmac.Equal([]byte(signatureHeader), []byte(expectedSignature))
 }
 
 func (h *handler) webhookSync(w http.ResponseWriter, r *http.Request) {
@@ -32,9 +48,28 @@ func (h *handler) webhookSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Parse the incoming webhook payload
+	// 1. Read raw body (Required for HMAC calculation)
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+
+	// 2. Validate HMAC-SHA256 Signature to prevent Ping of Death
+	if h.cfg.WebhookSecret != "" {
+		sig := r.Header.Get("X-Hub-Signature-256")
+		if !verifySignature(h.cfg.WebhookSecret, bodyBytes, sig) {
+			log.Println("🚨 Security Alert: Blocked webhook payload with invalid signature!")
+			http.Error(w, "Unauthorized: Invalid Signature", http.StatusUnauthorized)
+			return
+		}
+	} else {
+		log.Println("⚠️ Webhook hit, but WebhookSecret is empty in config. Bypassing security check...")
+	}
+
+	// 3. Parse Payload
 	var payload githubWebhookPayload
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
 		log.Printf("⚠️ Failed to decode webhook payload: %v", err)
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
@@ -44,27 +79,24 @@ func (h *handler) webhookSync(w http.ResponseWriter, r *http.Request) {
 	if incomingURL == "" {
 		incomingURL = payload.Repository.HTMLURL
 	}
-
 	if incomingURL == "" {
-		log.Println("⚠️ Webhook received but no repository URL found in payload.")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Ignored: No repository URL"))
 		return
 	}
 
 	normalizedIncoming := normalizeURL(incomingURL)
-	log.Printf("🔄 Webhook received for repository: %s", normalizedIncoming)
+	log.Printf("🔄 Webhook verified for repository: %s", normalizedIncoming)
 
-	// We launch this in a goroutine so we can immediately return a 200 OK
-	// to GitHub, preventing the webhook from timing out.
+	// 4. Background Sync processing
 	go func() {
-		successCount := 0
+		// Acquire Split-Brain Mutex lock
+		h.store.BeginRemoteSync()
+		defer h.store.EndRemoteSync()
 
-		// 2. Loop through tracked repositories, but ONLY trigger on a match
+		successCount := 0
 		for _, sync := range h.cfg.StartupSync {
 			normalizedTarget := normalizeURL(sync.URL)
-
-			// Skip if it doesn't match the webhook's origin repository
 			if !strings.HasPrefix(normalizedTarget, normalizedIncoming) {
 				continue
 			}
@@ -79,41 +111,30 @@ func (h *handler) webhookSync(w http.ResponseWriter, r *http.Request) {
 			}
 
 			destDir := filepath.Join(h.store.DataDir(), filepath.Base(filepath.Clean(sync.Filename)))
-			log.Printf("📥 Webhook matching target found. Triggering delta pull for: %s", sync.Filename)
+			log.Printf("📥 Webhook triggering delta pull for: %s", sync.Filename)
 
-			// Switch from Pull to PullDelta
 			changedFiles, err := fetch.PullDelta(sync.URL, srcType, destDir)
 			if err != nil {
 				log.Printf("⚠️ Failed to sync %s: %v", sync.Filename, err)
 			} else {
 				successCount++
-				// Apply Granular Memory Cache Invalidation
+
 				if changedFiles == nil {
-					log.Println("🔄 Fresh clone detected. Executing full memory index rebuild...")
 					h.store.Reload()
 				} else if len(changedFiles) > 0 {
-					log.Printf("⚡ Hot-Patching %d modified files into active memory...", len(changedFiles))
+					log.Printf("⚡ Hot-Patching %d modified files...", len(changedFiles))
 					if err := h.store.UpdateFiles(changedFiles); err != nil {
-						log.Printf("⚠️ Partial hot-reload failed, falling back to full reload: %v", err)
 						h.store.Reload()
 					}
 				}
 			}
 		}
 
-		if successCount > 0 {
-			// 3. Hot-reload the memory map AFTER the files are successfully updated
-			// (Note: We will optimize this full reload in Phase 3)
-			if err := h.store.Reload(); err != nil {
-				log.Printf("⚠️ Webhook sync completed, but memory index reload failed: %v", err)
-			} else {
-				log.Println("✅ Webhook sync complete. Memory index updated.")
-			}
-		} else {
-			log.Println("⚠️ Webhook finished, but no matching tracked repositories were found for this URL.")
+		if successCount == 0 {
+			log.Println("⚠️ Webhook finished, but no matching tracked repositories were found.")
 		}
 	}()
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Sync process initiated for matching targets"))
+	w.Write([]byte("Sync process initiated securely"))
 }

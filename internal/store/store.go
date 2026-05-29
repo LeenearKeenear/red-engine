@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic" // <--- ADD THIS
 	"time"
 
 	"github.com/RED-Collective/red-engine/internal/models"
@@ -21,9 +22,11 @@ import (
 )
 
 type Store struct {
-	dataDir string
-	nav     map[string]*models.Section
-	mu      sync.RWMutex
+	dataDir          string
+	nav              map[string]*models.Section
+	mu               sync.RWMutex
+	remoteSyncActive atomic.Bool  // NEW: Webhook lock
+	remoteSyncEnd    atomic.Int64 // NEW: Webhook cooldown timer
 }
 
 func New(dataDir string) *Store {
@@ -61,10 +64,13 @@ func (s *Store) Watch() error {
 		for {
 			select {
 			case event := <-w.Event:
-				log.Printf("🔄 Local file change detected: %s", event.Path)
+				// NEW: Check the concurrency lock
+				if s.ShouldIgnoreLocalEvents() {
+					log.Printf("🛡️ Ignored local event for %s (Remote sync is handling it)", event.Path)
+					continue
+				}
 
-				// Hook into our new Granular Hot-Reloading module!
-				// We pass just the single file that was edited locally.
+				log.Printf("🔄 Local file change detected: %s", event.Path)
 				if err := s.UpdateFiles([]string{event.Path}); err != nil {
 					log.Printf("⚠️ Hot-reload failed for %s, falling back to full reload", event.Path)
 					s.Reload()
@@ -501,4 +507,29 @@ func (s *Store) insertArticle(parts []string, art *models.Article) {
 			sec.Sub[subName].Articles = append(sec.Sub[subName].Articles, art)
 		}
 	}
+}
+
+// BeginRemoteSync locks out the local watcher during a webhook pull
+func (s *Store) BeginRemoteSync() {
+	s.remoteSyncActive.Store(true)
+}
+
+// EndRemoteSync releases the lock and starts a brief cooldown timer
+func (s *Store) EndRemoteSync() {
+	s.remoteSyncEnd.Store(time.Now().UnixNano())
+	s.remoteSyncActive.Store(false)
+}
+
+// ShouldIgnoreLocalEvents checks if a webhook is currently active OR just finished
+func (s *Store) ShouldIgnoreLocalEvents() bool {
+	if s.remoteSyncActive.Load() {
+		return true
+	}
+	lastEnd := s.remoteSyncEnd.Load()
+	// Give the local watcher a 4-second blind spot after a remote sync finishes
+	// to prevent split-brain double triggers.
+	if lastEnd > 0 && time.Since(time.Unix(0, lastEnd)) < 4*time.Second {
+		return true
+	}
+	return false
 }
