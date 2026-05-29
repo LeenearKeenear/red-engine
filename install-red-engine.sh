@@ -31,6 +31,11 @@ else
     echo "[*] ./data directory already exists."
 fi
 
+# FIX: Prevent container permission-denied errors by ensuring the 
+# restricted 'reduser' inside the container can write to the host volume.
+echo "[*] Setting universal read/write permissions on ./data..."
+chmod 777 ./data
+
 if [ ! -f "config.json" ]; then
     echo "[*] Generating default config.json..."
     NEW_TOKEN=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 24 | head -n 1)

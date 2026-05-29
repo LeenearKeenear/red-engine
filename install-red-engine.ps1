@@ -31,6 +31,11 @@ if (-Not (Test-Path ".\data")) {
     Write-Host "[*] .\data directory already exists."
 }
 
+# FIX: Prevent container permission-denied errors by ensuring the 
+# restricted 'reduser' inside the container can write to the host volume.
+Write-Host "[*] Setting universal read/write permissions on .\data..." -ForegroundColor Cyan
+icacls ".\data" /grant "Everyone:(OI)(CI)F" /T | Out-Null
+
 if (-Not (Test-Path "config.json")) {
     Write-Host "[*] Generating default config.json..."
 
