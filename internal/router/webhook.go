@@ -37,8 +37,7 @@ func (h *handler) webhookSync(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Destination directly inside the data directory
-			destDir := filepath.Join(h.store.DataDir(), sync.Filename)
-
+			destDir := filepath.Join(h.store.DataDir(), filepath.Base(filepath.Clean(sync.Filename)))
 			log.Printf("📥 Webhook triggering network pull for: %s", sync.Filename)
 
 			// Execute the actual download / git mirror operation

@@ -15,7 +15,7 @@ import (
 
 	"github.com/RED-Collective/red-engine/internal/models"
 	"github.com/RED-Collective/red-engine/internal/render"
-	"github.com/fsnotify/fsnotify"
+	"github.com/fsnotify/fsnotify" // <--- ADD THIS
 )
 
 type Store struct {

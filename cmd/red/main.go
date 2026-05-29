@@ -42,34 +42,49 @@ func main() {
 			log.Fatalf("fetch: %v", err)
 		}
 	}
-
-	// 2. Startup Sync
-	if len(cfg.StartupSync) > 0 {
-		if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
-			log.Fatalf("CRITICAL: Failed to create data directory: %v", err)
-		}
-
-		client := &http.Client{Timeout: 15 * time.Second}
-
-		for _, sync := range cfg.StartupSync {
-			// FIX: Directly join DataDir and Filename. NO remote folder!
-			destinationPath := filepath.Join(cfg.DataDir, sync.Filename)
-
-			if err := executeSync(client, sync.URL, destinationPath); err != nil {
-				log.Printf("Startup Sync Error (%s): %v", sync.Filename, err)
-			} else {
-				log.Printf("Startup Sync: Successfully downloaded %s", sync.Filename)
-			}
-		}
-	}
-
-	// 3. Initialize Memory Store
 	s := store.New(cfg.DataDir)
 	if err := s.Reload(); err != nil {
 		log.Fatalf("store: %v", err)
 	}
+	// 2. Startup & Background Sync
+	if len(cfg.StartupSync) > 0 {
+		client := &http.Client{Timeout: 15 * time.Second}
 
-	// 4. Start HTTP Server
+		// Initial Boot Sync
+		for _, sync := range cfg.StartupSync {
+			cleanName := filepath.Base(filepath.Clean(sync.Filename))
+			destPath := filepath.Join(cfg.DataDir, cleanName)
+			log.Printf("Startup Sync: Fetching %s...", cleanName)
+
+			if err := executeSync(client, sync.URL, destPath); err != nil {
+				log.Printf("Startup Sync Error (%s): %v", sync.Filename, err)
+			}
+		}
+
+		// Background Polling Loop (Runs every 5 minutes)
+		go func() {
+			ticker := time.NewTicker(1 * time.Minute)
+			defer ticker.Stop()
+			for range ticker.C {
+				for _, sync := range cfg.StartupSync {
+					cleanName := filepath.Base(filepath.Clean(sync.Filename))
+					destPath := filepath.Join(cfg.DataDir, cleanName)
+					if err := executeSync(client, sync.URL, destPath); err != nil {
+						log.Printf("Background Sync Error: %v", err)
+					}
+				}
+				// Force memory update after downloads
+				s.Reload()
+			}
+		}()
+	}
+
+	// Start watching local files for live edits
+	if err := s.Watch(); err != nil {
+		log.Printf("⚠️ Failed to start file watcher: %v", err)
+	}
+
+	// 4. Start HTTP Server with the Refactored Router
 	h := router.New(s, &cfg, *cfgPath)
 	log.Printf("RED listening on %s", cfg.Addr)
 	log.Fatal(http.ListenAndServe(cfg.Addr, h))
@@ -78,18 +93,11 @@ func main() {
 func executeSync(client *http.Client, targetURL, destPath string) error {
 	lowerURL := strings.ToLower(targetURL)
 
-	// --- NATIVE GIT SUPPORT ---
-	if strings.HasSuffix(lowerURL, ".git") {
-		return fetch.Pull(targetURL, "git", destPath)
-	}
-	// --------------------------
-
 	if strings.HasSuffix(lowerURL, ".tar.gz") || strings.HasSuffix(lowerURL, ".zip") {
 		srcType := "tar.gz"
 		if strings.HasSuffix(lowerURL, ".zip") {
 			srcType = "zip"
 		}
-		// FIX: Use destPath directly. NO hardcoded "data" folder!
 		return fetch.Pull(targetURL, srcType, destPath)
 	}
 
@@ -109,7 +117,6 @@ func executeSync(client *http.Client, targetURL, destPath string) error {
 		return os.ErrPermission
 	}
 
-	// FIX: Use destPath directly. NO hardcoded "data" folder!
 	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 		return err
 	}
