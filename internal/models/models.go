@@ -6,6 +6,7 @@ type Article struct {
 	Path              string
 	Title             string
 	Body              template.HTML
+	Raw               string
 	Hash              string
 	Verified          bool
 	Author            string

@@ -18,12 +18,30 @@ func Pull(url, srcType, destDir string) error {
 		_, err := pullGit(url, destDir)
 		return err
 	}
-	if srcType == "raw" {
-		// Single file download logic is handled by the caller (router/sync.go)
-		// but we return nil here to satisfy the interface if called directly.
-		return nil
-	}
 
+	if srcType == "raw" {
+		if err := os.MkdirAll(filepath.Dir(destDir), 0755); err != nil {
+			return err
+		}
+		if !strings.HasSuffix(strings.ToLower(destDir), ".md") {
+			destDir += ".md"
+		}
+		resp, err := http.Get(url)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("fetch: status %d", resp.StatusCode)
+		}
+		outFile, err := os.Create(destDir)
+		if err != nil {
+			return err
+		}
+		defer outFile.Close()
+		_, err = io.Copy(outFile, resp.Body)
+		return err
+	}
 	// ---------------------------------
 
 	resp, err := http.Get(url)
@@ -122,10 +140,11 @@ func extractZip(src, dest string) error {
 
 func writeEntry(dest, name string, isDir bool, r io.Reader) error {
 	parts := strings.SplitN(filepath.ToSlash(name), "/", 2)
-	if len(parts) < 2 {
-		return nil
+
+	rel := name
+	if len(parts) >= 2 {
+		rel = parts[1]
 	}
-	rel := parts[1]
 	if rel == "" {
 		return nil
 	}

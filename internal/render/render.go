@@ -17,7 +17,6 @@ type Result struct {
 	Hash        string
 }
 
-// We keep WithUnsafe() so Goldmark renders harmless HTML like <kbd> or <details>.
 var md = goldmark.New(
 	goldmark.WithExtensions(
 		extension.GFM,
@@ -32,8 +31,16 @@ var md = goldmark.New(
 	),
 )
 
-// Created a strict sanitizer policy specifically designed for user-generated content.
-var sanitizer = bluemonday.UGCPolicy()
+var sanitizer = func() *bluemonday.Policy {
+	p := bluemonday.UGCPolicy()
+	p.AllowAttrs("class").OnElements("code", "pre", "span", "div", "p", "li", "input")
+	p.AllowAttrs("id").OnElements("h1", "h2", "h3", "h4", "h5", "h6")
+	p.AllowAttrs("align").OnElements("td", "th")
+	p.AllowAttrs("type", "checked", "disabled", "readonly").OnElements("input")
+	p.AllowRelativeURLs(true)
+	p.AllowDataURIImages()
+	return p
+}()
 
 func Markdown(src string) (*Result, error) {
 	sum := sha256.Sum256([]byte(src))
@@ -44,7 +51,6 @@ func Markdown(src string) (*Result, error) {
 		return nil, err
 	}
 
-	// XSS PROTECTION: Sanitize the raw HTML output before returning it to the router
 	safeHTML := sanitizer.Sanitize(buf.String())
 
 	return &Result{
