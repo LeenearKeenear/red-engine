@@ -114,9 +114,6 @@ func (s *Store) ShouldIgnoreLocalEvents() bool {
 // =====================================================================
 
 func (s *Store) Reload() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	trustedKeys, allSignatures := s.loadSecurityData()
 	newNav := make(map[string]*models.Section)
 
@@ -124,12 +121,11 @@ func (s *Store) Reload() error {
 		if err != nil || d.IsDir() || filepath.Ext(path) != ".md" {
 			return nil
 		}
+        if d.Type()&fs.ModeSymlink != 0 { return nil }
 
 		art, parts, err := s.processArticle(path, trustedKeys, allSignatures)
 		if err == nil && art != nil {
 			s.insertIntoMap(newNav, parts, art)
-		} else if err != nil {
-			log.Printf("⚠️ Failed to parse article %s: %v", path, err)
 		}
 		return nil
 	})
@@ -137,7 +133,11 @@ func (s *Store) Reload() error {
 	if err != nil {
 		return err
 	}
+
+	s.mu.Lock()
 	s.nav = newNav
+	s.mu.Unlock()
+
 	return nil
 }
 
@@ -382,25 +382,25 @@ func (s *Store) GetSection(path string) *models.Section {
 func (s *Store) insertIntoMap(nav map[string]*models.Section, parts []string, art *models.Article) {
 	if len(parts) == 1 {
 		if nav["root"] == nil {
-			nav["root"] = &models.Section{Name: "root"}
+			nav["root"] = &models.Section{Name: "root", Sub: make(map[string]*models.Section)}
 		}
 		nav["root"].Articles = append(nav["root"].Articles, art)
-	} else {
-		secName := parts[0]
-		if nav[secName] == nil {
-			nav[secName] = &models.Section{Name: secName, Sub: make(map[string]*models.Section)}
-		}
-		sec := nav[secName]
-		if len(parts) == 2 {
-			sec.Articles = append(sec.Articles, art)
-		} else {
-			subName := parts[1]
-			if sec.Sub[subName] == nil {
-				sec.Sub[subName] = &models.Section{Name: subName}
-			}
-			sec.Sub[subName].Articles = append(sec.Sub[subName].Articles, art)
-		}
+		return
 	}
+
+	currentLevel := nav
+	var currentSec *models.Section
+
+	for i := 0; i < len(parts)-1; i++ {
+		secName := parts[i]
+		if currentLevel[secName] == nil {
+			currentLevel[secName] = &models.Section{Name: secName, Sub: make(map[string]*models.Section)}
+		}
+		currentSec = currentLevel[secName]
+		currentLevel = currentSec.Sub
+	}
+	
+	currentSec.Articles = append(currentSec.Articles, art)
 }
 
 func (s *Store) removeFromMap(nav map[string]*models.Section, parts []string) {
@@ -452,7 +452,7 @@ func (s *Store) Get(path string) *models.Article {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	path = strings.TrimPrefix(path, "/")
+	path = strings.TrimPrefix(filepath.ToSlash(path), "/")
 	parts := strings.Split(path, "/")
 
 	if len(parts) == 1 {
@@ -463,23 +463,24 @@ func (s *Store) Get(path string) *models.Article {
 				}
 			}
 		}
-	} else if len(parts) == 2 {
-		if sec, ok := s.nav[parts[0]]; ok {
-			for _, a := range sec.Articles {
-				if a.Path == "/"+path {
-					return a
-				}
-			}
+		return nil
+	}
+
+	currentLevel := s.nav
+	var currentSec *models.Section
+
+	for i := 0; i < len(parts)-1; i++ {
+		secName := parts[i]
+		currentSec = currentLevel[secName]
+		if currentSec == nil {
+			return nil
 		}
-	} else if len(parts) == 3 {
-		if sec, ok := s.nav[parts[0]]; ok {
-			if sub, ok := sec.Sub[parts[1]]; ok {
-				for _, a := range sub.Articles {
-					if a.Path == "/"+path {
-						return a
-					}
-				}
-			}
+		currentLevel = currentSec.Sub
+	}
+
+	for _, a := range currentSec.Articles {
+		if a.Path == "/"+path {
+			return a
 		}
 	}
 	return nil
