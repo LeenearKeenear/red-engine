@@ -169,10 +169,16 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 
 	// 5. Persist to configuration state if requested
 	if req.SaveToStartup {
-		h.cfg.StartupSync = append(h.cfg.StartupSync, config.RemoteSync{
-			URL:      req.URL,
-			Filename: targetSubPath, // This will now save a flat name like "awesome-markdown"
-		})
+		h.cfg.Mu.Lock()
+		var newSync []config.RemoteSync
+		for _, sync := range h.cfg.StartupSync {
+			if sync.Filename != req.Filename {
+				newSync = append(newSync, sync)
+			}
+		}
+		h.cfg.StartupSync = newSync
+		h.cfg.Mu.Unlock()
+
 		if err := h.cfg.Save(h.cfgPath); err != nil {
 			http.Error(w, "Synced successfully, but config save failed", http.StatusInternalServerError)
 			return
@@ -187,6 +193,8 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) adminConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	h.cfg.Mu.RLock()
+	defer h.cfg.Mu.RUnlock()
 	json.NewEncoder(w).Encode(h.cfg.StartupSync)
 }
 
@@ -206,6 +214,7 @@ func (h *handler) adminRemove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. Remove from the Config Array
+	h.cfg.Mu.Lock()
 	var newSync []config.RemoteSync
 	for _, sync := range h.cfg.StartupSync {
 		if sync.Filename != req.Filename {
@@ -213,6 +222,7 @@ func (h *handler) adminRemove(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.cfg.StartupSync = newSync
+	h.cfg.Mu.Unlock()
 
 	// 2. Save Config to Disk
 	if err := h.cfg.Save(h.cfgPath); err != nil {

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/RED-Collective/red-engine/internal/config"
 	"github.com/RED-Collective/red-engine/internal/fetch"
 )
 
@@ -95,7 +96,11 @@ func (h *handler) webhookSync(w http.ResponseWriter, r *http.Request) {
 		defer h.store.EndRemoteSync()
 
 		successCount := 0
-		for _, sync := range h.cfg.StartupSync {
+		h.cfg.Mu.RLock()
+		syncList := make([]config.RemoteSync, len(h.cfg.StartupSync))
+		copy(syncList, h.cfg.StartupSync)
+		h.cfg.Mu.RUnlock()
+		for _, sync := range syncList {
 			normalizedTarget := normalizeURL(sync.URL)
 			if !strings.HasPrefix(normalizedTarget, normalizedIncoming) {
 				continue

@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"sync"
 )
 
 type RemoteSync struct {
@@ -11,13 +12,14 @@ type RemoteSync struct {
 }
 
 type Config struct {
+	Mu            sync.RWMutex `json:"-"`
 	Addr          string       `json:"addr"`
 	SiteName      string       `json:"siteName"`
 	DataDir       string       `json:"dataDir"`
 	SourceURL     string       `json:"sourceURL"`
 	SourceType    string       `json:"sourceType"`
 	AdminToken    string       `json:"adminToken"`
-	WebhookSecret string       `json:"webhookSecret"` // NEW: GitHub Signature Key
+	WebhookSecret string       `json:"webhookSecret"`
 	StartupSync   []RemoteSync `json:"startupSync"`
 }
 
@@ -43,7 +45,9 @@ func Load(path string) (Config, error) {
 
 // NEW: Allows the application to save changes back to disk
 func (c *Config) Save(path string) error {
+	c.Mu.RLock()
 	b, err := json.MarshalIndent(c, "", "  ")
+	c.Mu.RUnlock()
 	if err != nil {
 		return err
 	}

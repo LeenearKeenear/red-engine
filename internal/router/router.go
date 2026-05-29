@@ -1,6 +1,7 @@
 package router
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
 	"html/template"
@@ -74,8 +75,10 @@ func (h *handler) adminOnly(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// 2. Use ConstantTimeCompare to prevent timing attacks
-		if subtle.ConstantTimeCompare([]byte(token), []byte(h.cfg.AdminToken)) != 1 {
+		// 2. Use ConstantTimeCompare on hashes to prevent length-based timing attacks
+		expectedHash := sha256.Sum256([]byte(h.cfg.AdminToken))
+		providedHash := sha256.Sum256([]byte(token))
+		if subtle.ConstantTimeCompare(providedHash[:], expectedHash[:]) != 1 {
 			http.Error(w, "Unauthorized: Invalid Token", http.StatusUnauthorized)
 			return
 		}

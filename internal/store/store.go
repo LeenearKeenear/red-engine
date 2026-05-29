@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -164,8 +165,6 @@ func (s *Store) UpdateFiles(changedPaths []string) error {
 
 		trustedKeys, allSignatures := s.loadSecurityData()
 
-		s.removeFromMap(s.nav, parts)
-
 		art, _, err := s.processArticle(p, trustedKeys, allSignatures)
 		if err == nil && art != nil {
 			s.insertIntoMap(s.nav, parts, art)
@@ -277,6 +276,7 @@ func (s *Store) processArticle(p string, trustedKeys map[string]string, allSigna
 		Path:              "/" + filepath.ToSlash(cleanPath),
 		Title:             title,
 		Body:              template.HTML(res.HTMLContent),
+		Raw:               string(content),
 		Hash:              fileHash,
 		Verified:          isVerified,
 		Author:            authorName,
@@ -342,8 +342,15 @@ func (s *Store) BuildSearchIndex() []SearchItem {
 		}
 	}
 
-	for _, sec := range s.nav {
-		walk(sec, "")
+	// Extract keys and sort them alphabetically
+	keys := make([]string, 0, len(s.nav))
+	for k := range s.nav {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		walk(s.nav[k], "")
 	}
 
 	return items
@@ -399,6 +406,9 @@ func (s *Store) removeFromMap(nav map[string]*models.Section, parts []string) {
 					break
 				}
 			}
+			if len(sec.Articles) == 0 && len(sec.Sub) == 0 {
+				delete(nav, "root")
+			}
 		}
 	} else if len(parts) == 2 {
 		if sec, ok := nav[parts[0]]; ok {
@@ -407,6 +417,9 @@ func (s *Store) removeFromMap(nav map[string]*models.Section, parts []string) {
 					sec.Articles = append(sec.Articles[:i], sec.Articles[i+1:]...)
 					break
 				}
+			}
+			if len(sec.Articles) == 0 && len(sec.Sub) == 0 {
+				delete(nav, parts[0])
 			}
 		}
 	} else if len(parts) == 3 {
@@ -418,11 +431,16 @@ func (s *Store) removeFromMap(nav map[string]*models.Section, parts []string) {
 						break
 					}
 				}
+				if len(sub.Articles) == 0 && len(sub.Sub) == 0 {
+					delete(sec.Sub, parts[1])
+				}
+			}
+			if len(sec.Articles) == 0 && len(sec.Sub) == 0 {
+				delete(nav, parts[0])
 			}
 		}
 	}
 }
-
 func (s *Store) Get(path string) *models.Article {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
