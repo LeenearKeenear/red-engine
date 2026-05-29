@@ -10,12 +10,15 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 )
 
-// pullGit now returns a slice of exact file paths that were modified during the sync.
 func pullGit(url, destDir string) ([]string, error) {
 	repo, err := git.PlainOpen(destDir)
 	if err != nil {
 		if err == git.ErrRepositoryNotExists {
-			log.Printf("📥 Native go-git: Cloning fresh repository into %s...", destDir)
+			log.Printf("📥 Native go-git: Repository missing or corrupted. Rebuilding %s...", destDir)
+
+			// FIX: Destroy any leftover garbage folders from old zip syncs so git can clone cleanly
+			os.RemoveAll(destDir)
+
 			if err := os.MkdirAll(destDir, 0755); err != nil {
 				return nil, err
 			}
@@ -26,8 +29,7 @@ func pullGit(url, destDir string) ([]string, error) {
 			if err != nil {
 				return nil, fmt.Errorf("go-git clone failed: %v", err)
 			}
-			// Returning a nil slice tells the router "Everything is new, do a full reload"
-			return nil, nil
+			return nil, nil // Tells the router to do a full memory reload
 		}
 		return nil, fmt.Errorf("failed to check existing repository: %v", err)
 	}
@@ -38,7 +40,6 @@ func pullGit(url, destDir string) ([]string, error) {
 		return nil, fmt.Errorf("failed to get git worktree: %v", err)
 	}
 
-	// 1. Capture the commit hash BEFORE the pull
 	var oldHash plumbing.Hash
 	if head, err := repo.Head(); err == nil {
 		oldHash = head.Hash()
@@ -53,14 +54,12 @@ func pullGit(url, destDir string) ([]string, error) {
 	if err != nil {
 		if err == git.NoErrAlreadyUpToDate {
 			log.Printf("✅ Sync skipped: %s is already up to date.", destDir)
-			return []string{}, nil // Empty slice means 0 files changed
+			return []string{}, nil
 		}
 		return nil, fmt.Errorf("go-git delta pull failed: %v", err)
 	}
 
 	var changedFiles []string
-
-	// 2. Capture the commit hash AFTER the pull and calculate the diff
 	if head, err := repo.Head(); err == nil {
 		newHash := head.Hash()
 		if oldHash != plumbing.ZeroHash && oldHash != newHash {
@@ -70,7 +69,6 @@ func pullGit(url, destDir string) ([]string, error) {
 				patch, err3 := oldCommit.Patch(newCommit)
 				if err3 == nil {
 					for _, fileStat := range patch.Stats() {
-						// go-git returns relative paths (e.g., "docs/guide.md"). Convert to absolute.
 						fullPath := filepath.Join(destDir, fileStat.Name)
 						changedFiles = append(changedFiles, fullPath)
 					}

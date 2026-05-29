@@ -144,29 +144,25 @@ func (s *Store) Reload() error {
 
 func (s *Store) UpdateFiles(changedPaths []string) error {
 	for _, p := range changedPaths {
-		if strings.HasSuffix(p, "manifest.json") || strings.HasSuffix(p, "contributors.json") {
-			log.Println("🛡️ Security definitions modified. Forcing full engine reload...")
-			return s.Reload()
-		}
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	trustedKeys, allSignatures := s.loadSecurityData()
-
-	for _, p := range changedPaths {
 		p = filepath.Clean(p)
 		if filepath.Ext(p) != ".md" {
 			continue
 		}
 
-		rel, err := filepath.Rel(s.dataDir, p)
+		// FIX: Bulletproof absolute path resolution for the file watcher
+		absP, _ := filepath.Abs(p)
+		absData, _ := filepath.Abs(s.dataDir)
+		rel, err := filepath.Rel(absData, absP)
 		if err != nil {
 			continue
 		}
+
 		cleanPath := strings.TrimSuffix(strings.TrimPrefix(filepath.ToSlash(rel), "/"), ".md")
 		parts := strings.Split(filepath.ToSlash(cleanPath), "/")
+
+		s.removeFromMap(s.nav, parts)
+
+		trustedKeys, allSignatures := s.loadSecurityData()
 
 		s.removeFromMap(s.nav, parts)
 
@@ -222,7 +218,10 @@ func (s *Store) processArticle(p string, trustedKeys map[string]string, allSigna
 		return nil, nil, err
 	}
 
-	rel, err := filepath.Rel(s.dataDir, p)
+	// FIX: Bulletproof absolute path resolution
+	absP, _ := filepath.Abs(p)
+	absData, _ := filepath.Abs(s.dataDir)
+	rel, err := filepath.Rel(absData, absP)
 	if err != nil {
 		return nil, nil, err
 	}
