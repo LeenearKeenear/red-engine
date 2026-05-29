@@ -48,10 +48,12 @@ func main() {
 	}
 
 	// 2. Startup & Background Sync
-
 	if len(cfg.StartupSync) > 0 {
-		// Initial Boot Sync
+
+		// FIX: Wrap the entire boot sequence inside the goroutine and apply locks
 		go func() {
+			s.BeginRemoteSync() // Lock out the local watcher
+
 			for _, sync := range cfg.StartupSync {
 				cleanName := filepath.Base(filepath.Clean(sync.Filename))
 				destDir := filepath.Join(cfg.DataDir, cleanName)
@@ -71,10 +73,16 @@ func main() {
 					log.Printf("Startup Sync Error (%s): %v", sync.Filename, err)
 				}
 			}
-		}()
 
-		// Force memory update after initial boot downloads
-		s.Reload()
+			s.EndRemoteSync() // Release the lock
+
+			// FIX: Force memory update AFTER the initial boot downloads finish
+			if err := s.Reload(); err != nil {
+				log.Printf("⚠️ Startup Reload Error: %v", err)
+			} else {
+				log.Println("✅ Startup Sync Complete: Memory map populated.")
+			}
+		}()
 
 		// Background Smart Polling Loop (Runs every 1 minute)
 		go func() {
@@ -95,16 +103,13 @@ func main() {
 						srcType = "zip"
 					}
 
-					// Use PullDelta so we only process actual changes
 					changedFiles, err := fetch.PullDelta(sync.URL, srcType, destDir)
 					if err != nil {
 						log.Printf("Background Sync Error (%s): %v", sync.Filename, err)
 						continue
 					}
 
-					// Apply Granular Memory Cache Invalidation silently
 					if changedFiles == nil {
-						// nil means a full ZIP extract happened or a fresh clone
 						s.Reload()
 					} else if len(changedFiles) > 0 {
 						log.Printf("⚡ Background Sync: Hot-Patching %d modified files...", len(changedFiles))

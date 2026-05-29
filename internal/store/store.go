@@ -28,7 +28,6 @@ type Store struct {
 	remoteSyncEnd    atomic.Int64
 }
 
-// SearchItem is used to generate the frontend search index
 type SearchItem struct {
 	Title string `json:"title"`
 	Path  string `json:"path"`
@@ -54,7 +53,9 @@ func (s *Store) Nav() map[string]*models.Section {
 
 func (s *Store) Watch() error {
 	w := watcher.New()
-	w.SetMaxEvents(1)
+
+	// FIX: Removed w.SetMaxEvents(1) which was dropping bulk file updates
+
 	w.FilterOps(watcher.Write, watcher.Create, watcher.Remove, watcher.Rename)
 
 	go func() {
@@ -128,6 +129,8 @@ func (s *Store) Reload() error {
 		art, parts, err := s.processArticle(path, trustedKeys, allSignatures)
 		if err == nil && art != nil {
 			s.insertIntoMap(newNav, parts, art)
+		} else if err != nil {
+			log.Printf("⚠️ Failed to parse article %s: %v", path, err)
 		}
 		return nil
 	})
@@ -165,13 +168,13 @@ func (s *Store) UpdateFiles(changedPaths []string) error {
 		cleanPath := strings.TrimSuffix(strings.TrimPrefix(filepath.ToSlash(rel), "/"), ".md")
 		parts := strings.Split(filepath.ToSlash(cleanPath), "/")
 
-		// Surgically remove the old article from the current tree
 		s.removeFromMap(s.nav, parts)
 
-		// Render and insert the new version
 		art, _, err := s.processArticle(p, trustedKeys, allSignatures)
 		if err == nil && art != nil {
 			s.insertIntoMap(s.nav, parts, art)
+		} else if err != nil {
+			log.Printf("⚠️ Failed to hot-patch article %s: %v", p, err)
 		}
 	}
 	return nil
@@ -304,12 +307,11 @@ func (s *Store) BuildSearchIndex() []SearchItem {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var items []SearchItem
-	
-	// Recursive helper to flatten the nested map
+	// FIX: Explicitly initialize the array to prevent JSON returning "null"
+	items := make([]SearchItem, 0)
+
 	var walk func(sec *models.Section, parentPath string)
 	walk = func(sec *models.Section, parentPath string) {
-		// The root section has no path of its own
 		if sec.Name == "root" {
 			for _, art := range sec.Articles {
 				items = append(items, SearchItem{
@@ -321,8 +323,7 @@ func (s *Store) BuildSearchIndex() []SearchItem {
 		}
 
 		currentPath := parentPath + "/" + sec.Name
-		
-		// 1. Add the directory itself to the search index
+
 		title := strings.ReplaceAll(sec.Name, "-", " ")
 		title = strings.Title(title)
 		items = append(items, SearchItem{
@@ -330,21 +331,18 @@ func (s *Store) BuildSearchIndex() []SearchItem {
 			Path:  currentPath,
 		})
 
-		// 2. Add all files inside this directory
 		for _, art := range sec.Articles {
 			items = append(items, SearchItem{
 				Title: "📄 " + art.Title,
 				Path:  art.Path,
 			})
 		}
-		
-		// 3. Recurse into subdirectories
+
 		for _, sub := range sec.Sub {
 			walk(sub, currentPath)
 		}
 	}
 
-	// Start the recursive walk
 	for _, sec := range s.nav {
 		walk(sec, "")
 	}
@@ -352,7 +350,6 @@ func (s *Store) BuildSearchIndex() []SearchItem {
 	return items
 }
 
-// GetSection securely retrieves a directory object based on its URL path
 func (s *Store) GetSection(path string) *models.Section {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -427,7 +424,6 @@ func (s *Store) removeFromMap(nav map[string]*models.Section, parts []string) {
 	}
 }
 
-// Get and Root accessors
 func (s *Store) Get(path string) *models.Article {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
