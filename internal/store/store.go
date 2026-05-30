@@ -18,6 +18,9 @@ import (
 
 	"github.com/RED-Collective/red-engine/internal/models"
 	"github.com/RED-Collective/red-engine/internal/render"
+
+	"github.com/RED-Collective/red-engine/internal/registry"
+
 	"github.com/radovskyb/watcher"
 )
 
@@ -182,22 +185,19 @@ func (s *Store) UpdateFiles(changedPaths []string) error {
 
 func (s *Store) loadSecurityData() (map[string]string, map[string]models.ManifestEntry) {
 	trustedKeys := make(map[string]string)
-
-	// FIX: Resolve the trusted keys relative to the data directory's parent (standard repository root)
-	trustPath := filepath.Join(filepath.Dir(s.dataDir), "contributors.json")
-	if _, err := os.Stat(trustPath); os.IsNotExist(err) {
-		trustPath = "contributors.json" // Fallback to process CWD
-	}
-
-	if trustData, err := os.ReadFile(trustPath); err == nil {
-		var contributors []models.Contributor
-		if err := json.Unmarshal(trustData, &contributors); err == nil {
-			for _, c := range contributors {
-				trustedKeys[strings.ToLower(c.PublicKey)] = c.Name
+	db := registry.GetDB()
+	if db != nil {
+		rows, err := db.Query(`SELECT public_key, name FROM trusted_authors WHERE revoked = 0`)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var pub, name string
+				if err := rows.Scan(&pub, &name); err == nil {
+					trustedKeys[strings.ToLower(pub)] = name
+				}
 			}
 		}
 	}
-
 	allSignatures := make(map[string]models.ManifestEntry)
 	filepath.WalkDir(s.dataDir, func(path string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() && filepath.Base(path) == "manifest.json" {

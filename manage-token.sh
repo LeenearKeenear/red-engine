@@ -1,5 +1,21 @@
 #!/bin/bash
+
 CONFIG_FILE="config.json"
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --config|-c)
+            CONFIG_FILE="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: $0 [--config <config.json>]"
+            exit 1
+            ;;
+    esac
+done
 
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "Error: $CONFIG_FILE not found in the current directory!"

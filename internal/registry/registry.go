@@ -50,8 +50,19 @@ func InitRegistry(dataDir string) error {
 				verified BOOLEAN DEFAULT 0,
 				added_at DATETIME DEFAULT CURRENT_TIMESTAMP
 			);
+			CREATE TABLE IF NOT EXISTS trusted_authors (
+    public_key TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    imported_from TEXT,           -- URL of the node that provided this entry (NULL for local)
+    imported_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    revoked BOOLEAN DEFAULT 0,
+    revoked_at DATETIME,
+    signature TEXT                -- optional: signature of the entry by the importing node
+);
 			CREATE INDEX IF NOT EXISTS idx_peers_url ON peers(url);
 			CREATE INDEX IF NOT EXISTS idx_peers_verified ON peers(verified);
+			CREATE INDEX IF NOT EXISTS idx_trusted_authors_name ON trusted_authors(name);
+            CREATE INDEX IF NOT EXISTS idx_trusted_authors_imported_from ON trusted_authors(imported_from);
 		`)
 	})
 	return err
@@ -64,8 +75,8 @@ func AddPeer(p Peer) error {
 	}
 	pathsJSON, _ := json.Marshal(p.ExportedPaths)
 	_, err := db.Exec(`
-		INSERT INTO peers(url, public_key, name, peer_type, exported_paths, last_seen, verified, added_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO peers (url, public_key, name, peer_type, exported_paths, last_seen, verified, added_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(url) DO UPDATE SET
 			public_key = excluded.public_key,
 			name = excluded.name,
@@ -124,4 +135,9 @@ func DeletePeer(url string) error {
 	}
 	_, err := db.Exec(`DELETE FROM peers WHERE url = ?`, url)
 	return err
+}
+
+// GetDB returns the underlying SQLite database handle.
+func GetDB() *sql.DB {
+	return db
 }
