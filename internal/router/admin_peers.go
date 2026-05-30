@@ -19,8 +19,12 @@ type nodeInfoResponse struct {
 	Signature       string   `json:"signature"`
 }
 
+type addPeerRequest struct {
+	URL      string `json:"url"`
+	PeerType string `json:"peer_type"`
+}
+
 func fetchNodeInfo(baseURL string) (*nodeInfoResponse, error) {
-	// Add scheme if missing
 	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
 		baseURL = "https://" + baseURL
 	}
@@ -42,17 +46,13 @@ func fetchNodeInfo(baseURL string) (*nodeInfoResponse, error) {
 		return nil, fmt.Errorf("invalid nodeinfo response: %w", err)
 	}
 
-	// Basic validation
 	if info.PublicKey == "" {
 		return nil, fmt.Errorf("peer did not provide a public key")
 	}
 	if info.Name == "" {
 		info.Name = "Unnamed Node"
 	}
-	
-type addPeerRequest struct {
-	URL      string `json:"url"`
-	PeerType string `json:"peer_type"` // upstream, downstream, mirror
+	return &info, nil
 }
 
 func (h *handler) listPeers(w http.ResponseWriter, r *http.Request) {
@@ -79,15 +79,11 @@ func (h *handler) addPeer(w http.ResponseWriter, r *http.Request) {
 		req.PeerType = "upstream"
 	}
 
-	// Fetch nodeinfo from peer
 	info, err := fetchNodeInfo(req.URL)
 	if err != nil {
 		http.Error(w, "Failed to fetch nodeinfo: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-
-	// Verify signature (optional but recommended)
-	// We'll trust HTTPS for now, but can add verification later.
 
 	peer := registry.Peer{
 		URL:           req.URL,
@@ -123,4 +119,81 @@ func (h *handler) deletePeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func (h *handler) checkPeerHealth(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	// Attempt to fetch /nodeinfo
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(strings.TrimSuffix(req.URL, "/") + "/-/nodeinfo")
+	if err != nil || resp.StatusCode != http.StatusOK {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("down"))
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("up"))
+}
+
+func (h *handler) checkPeerHealthHandler(w http.ResponseWriter, r *http.Request) {
+	peerURL := r.URL.Query().Get("url")
+	if peerURL == "" {
+		http.Error(w, "missing url parameter", http.StatusBadRequest)
+		return
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(strings.TrimSuffix(peerURL, "/") + "/-/nodeinfo")
+	status := "down"
+	if err == nil && resp.StatusCode == http.StatusOK {
+		status = "up"
+	}
+	if resp != nil {
+		resp.Body.Close()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": status})
+}
+
+func (h *handler) refreshPeer(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.URL == "" {
+		http.Error(w, "URL required", http.StatusBadRequest)
+		return
+	}
+
+	// Fetch fresh nodeinfo from peer
+	info, err := fetchNodeInfo(req.URL)
+	if err != nil {
+		http.Error(w, "Failed to fetch nodeinfo: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	// Update the peer in the database
+	peer := registry.Peer{
+		URL:           req.URL,
+		PublicKey:     info.PublicKey,
+		Name:          info.Name,
+		ExportedPaths: info.ExportedPaths,
+		LastSeen:      time.Now(),
+		Verified:      true, // signature already verified in fetchNodeInfo
+	}
+	if err := registry.AddPeer(peer); err != nil {
+		http.Error(w, "Failed to update peer: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 }

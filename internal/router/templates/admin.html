@@ -26,20 +26,17 @@
         <!-- Dashboard View -->
         <div id="dashboard-view" style="display: none;">
             <div class="alert success" style="text-align: center; margin-bottom: 1.5rem;">✓ Authenticated</div>
-<div id="dashboard-view" style="display: none;">
-    <div class="alert success" style="text-align: center; margin-bottom: 1.5rem;">✓ Authenticated</div>
 
-    <!-- === NEW: Node Identity Panel === -->
-    <div class="admin-section">
-        <h2 class="section-title">Node Identity</h2>
-        <div id="node-info" class="form-card">
-            <p><strong>Node Name:</strong> <span id="node-name">Loading...</span></p>
-            <p><strong>Public Key (hex):</strong> <code id="node-pubkey" class="contributor-key">Loading...</code></p>
-            <p><strong>Node Info Endpoint:</strong> <code id="node-endpoint"></code></p>
-            <button id="copy-node-pubkey" class="btn-success" style="margin-top: 0.5rem;">Copy Public Key</button>
-        </div>
-    </div>
-    <!-- ================================= -->
+            <!-- Node Identity Panel -->
+            <div class="admin-section">
+                <h2 class="section-title">Node Identity</h2>
+                <div id="node-info" class="form-card">
+                    <p><strong>Node Name:</strong> <span id="node-name">Loading...</span></p>
+                    <p><strong>Public Key (hex):</strong> <code id="node-pubkey" class="contributor-key">Loading...</code></p>
+                    <p><strong>Node Info Endpoint:</strong> <code id="node-endpoint"></code></p>
+                    <button id="copy-node-pubkey" class="btn-success" style="margin-top: 0.5rem;">Copy Public Key</button>
+                </div>
+            </div>
 
             <!-- Contributors Management -->
             <div class="admin-section">
@@ -52,6 +49,24 @@
                     <input type="text" id="contributor-key" placeholder="64-character hex string" class="admin-input">
                     <button class="btn-success" onclick="addContributor()">Add Contributor</button>
                     <div id="contributor-status" class="status-message"></div>
+                </div>
+            </div>
+
+            <!-- Peer Management -->
+            <div class="admin-section">
+                <h2 class="section-title">Peer Nodes</h2>
+                <div id="peers-list" class="peers-list"></div>
+                <div class="form-card">
+                    <label class="admin-label">Peer URL (e.g., https://node.example.com)</label>
+                    <input type="text" id="peer-url" placeholder="https://..." class="admin-input">
+                    <label class="admin-label mt-3">Peer Type</label>
+                    <select id="peer-type" class="admin-input">
+                        <option value="upstream">Upstream (sync from)</option>
+                        <option value="downstream">Downstream (sync to)</option>
+                        <option value="mirror">Mirror (bidirectional)</option>
+                    </select>
+                    <button class="btn-success" onclick="addPeer()">Add Peer</button>
+                    <div id="peer-status" class="status-message"></div>
                 </div>
             </div>
 
@@ -93,33 +108,34 @@
             }
         }
 
-async function login() {
-    const tokenInput = document.getElementById("token").value;
-    const statusDiv = document.getElementById("login-status");
-    statusDiv.textContent = "Verifying...";
-    statusDiv.className = "status-message";
-    try {
-        const response = await fetch("/-/admin/config", {
-            headers: { "X-Admin-Token": tokenInput },
-        });
-        if (response.ok) {
-            sessionToken = tokenInput;
-            document.getElementById("login-view").style.display = "none";
-            document.getElementById("dashboard-view").style.display = "block";
-            const data = await response.json();
-            renderList(data);
-            loadContributors();
-            loadNodeInfo();                 // <-- ADD THIS
-            document.getElementById('copy-node-pubkey').onclick = copyNodePubkey; // <-- ADD THIS
-        } else {
-            statusDiv.textContent = "Error: Invalid Admin Token!";
-            statusDiv.classList.add("error");
+        async function login() {
+            const tokenInput = document.getElementById("token").value;
+            const statusDiv = document.getElementById("login-status");
+            statusDiv.textContent = "Verifying...";
+            statusDiv.className = "status-message";
+            try {
+                const response = await fetch("/-/admin/config", {
+                    headers: { "X-Admin-Token": tokenInput },
+                });
+                if (response.ok) {
+                    sessionToken = tokenInput;
+                    document.getElementById("login-view").style.display = "none";
+                    document.getElementById("dashboard-view").style.display = "block";
+                    const data = await response.json();
+                    renderList(data);
+                    loadContributors();
+                    loadNodeInfo();
+                    loadPeers();
+                    document.getElementById('copy-node-pubkey').onclick = copyNodePubkey;
+                } else {
+                    statusDiv.textContent = "Error: Invalid Admin Token!";
+                    statusDiv.classList.add("error");
+                }
+            } catch (err) {
+                statusDiv.textContent = "Server communication failure. Check terminal logs.";
+                statusDiv.classList.add("error");
+            }
         }
-    } catch (err) {
-        statusDiv.textContent = "Server communication failure. Check terminal logs.";
-        statusDiv.classList.add("error");
-    }
-}
 
         function renderList(syncArray) {
             const list = document.getElementById("sync-list");
@@ -313,6 +329,7 @@ async function login() {
         }
 
         function escapeHtml(str) {
+            if (str == null) return '';
             return str.replace(/[&<>]/g, function(m) {
                 if (m === '&') return '&amp;';
                 if (m === '<') return '&lt;';
@@ -321,53 +338,227 @@ async function login() {
             });
         }
 
-        // Load node info from /-/nodeinfo
-async function loadNodeInfo() {
-    try {
-        const response = await fetch('/-/nodeinfo');
-        if (response.ok) {
-            const info = await response.json();
-            document.getElementById('node-name').textContent = info.name || 'Unnamed Node';
-            document.getElementById('node-pubkey').textContent = info.public_key || 'N/A';
-            document.getElementById('node-endpoint').textContent = window.location.origin + '/-/nodeinfo';
-        } else {
-            document.getElementById('node-name').textContent = 'Failed to load';
-            document.getElementById('node-pubkey').textContent = 'Error';
+        async function loadNodeInfo() {
+            try {
+                const response = await fetch('/-/nodeinfo');
+                if (response.ok) {
+                    const info = await response.json();
+                    document.getElementById('node-name').textContent = info.name || 'Unnamed Node';
+                    document.getElementById('node-pubkey').textContent = info.public_key || 'N/A';
+                    document.getElementById('node-endpoint').textContent = window.location.origin + '/-/nodeinfo';
+                } else {
+                    document.getElementById('node-name').textContent = 'Failed to load';
+                    document.getElementById('node-pubkey').textContent = 'Error';
+                }
+            } catch (err) {
+                console.error('Failed to fetch node info', err);
+                document.getElementById('node-name').textContent = 'Error loading';
+            }
         }
-    } catch (err) {
-        console.error('Failed to fetch node info', err);
-        document.getElementById('node-name').textContent = 'Error loading';
-    }
-}
 
-// Copy public key to clipboard
-function copyNodePubkey() {
-    const pubkey = document.getElementById('node-pubkey').textContent;
-    if (pubkey && pubkey !== 'Loading...') {
-        navigator.clipboard.writeText(pubkey).then(() => {
-            alert('Public key copied to clipboard!');
-        }).catch(() => {
-            alert('Failed to copy');
-        });
-    }
-}
-<!-- Peer Management -->
-<div class="admin-section">
-    <h2 class="section-title">Peer Nodes</h2>
-    <div id="peers-list" class="peers-list"></div>
-    <div class="form-card">
-        <label class="admin-label">Peer URL (e.g., https://node.example.com)</label>
-        <input type="text" id="peer-url" placeholder="https://..." class="admin-input">
-        <label class="admin-label mt-3">Peer Type</label>
-        <select id="peer-type" class="admin-input">
-            <option value="upstream">Upstream (sync from)</option>
-            <option value="downstream">Downstream (sync to)</option>
-            <option value="mirror">Mirror (bidirectional)</option>
-        </select>
-        <button class="btn-success" onclick="addPeer()">Add Peer</button>
-        <div id="peer-status" class="status-message"></div>
-    </div>
-</div>
+        function copyNodePubkey() {
+            const pubkey = document.getElementById('node-pubkey').textContent;
+            if (pubkey && pubkey !== 'Loading...') {
+                navigator.clipboard.writeText(pubkey).then(() => {
+                    alert('Public key copied to clipboard!');
+                }).catch(() => {
+                    alert('Failed to copy');
+                });
+            }
+        }
+
+        // ---------- Peer health check via backend proxy to avoid CORS ----------
+        async function checkPeerHealth(peerUrl) {
+            try {
+                const response = await fetch(`/-/admin/peers/health?url=${encodeURIComponent(peerUrl)}`, {
+                    headers: { 'X-Admin-Token': sessionToken }
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    return data.status;
+                }
+                return 'down';
+            } catch (err) {
+                console.error('Health check error:', err);
+                return 'down';
+            }
+        }
+
+        // ---------- Sync all exported paths of a peer ----------
+        async function syncAllExportedPaths(peerUrl, exportedPaths) {
+            if (!exportedPaths || exportedPaths.length === 0) {
+                alert('No exported paths to sync for this peer.');
+                return;
+            }
+            if (!confirm(`Sync all ${exportedPaths.length} paths from ${peerUrl}?`)) return;
+            let successCount = 0;
+            let failCount = 0;
+            for (const path of exportedPaths) {
+                const cleanPath = path.replace(/^\//, '').replace(/\/$/, '');
+                const localName = cleanPath.replace(/\//g, '-');
+                const payload = {
+                    peer_url: peerUrl,
+                    remote_path: '/' + cleanPath,
+                    filename: localName,
+                    saveToStartup: false
+                };
+                try {
+                    const response = await fetch('/-/import', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-Admin-Token': sessionToken
+                        },
+                        body: JSON.stringify(payload)
+                    });
+                    if (response.ok) {
+                        console.log(`Synced ${path} -> ${localName}`);
+                        successCount++;
+                    } else {
+                        const errText = await response.text();
+                        console.error(`Failed to sync ${path}: ${errText}`);
+                        failCount++;
+                    }
+                } catch (err) {
+                    console.error(`Network error syncing ${path}:`, err);
+                    failCount++;
+                }
+            }
+            alert(`Sync finished: ${successCount} succeeded, ${failCount} failed. Check console for details.`);
+            refreshList();
+        }
+
+        // ---------- Render peers with health and sync button ----------
+        async function loadPeers() {
+            const response = await fetch('/-/admin/peers', {
+                headers: { 'X-Admin-Token': sessionToken }
+            });
+            if (response.ok) {
+                const peers = await response.json();
+                renderPeers(peers);
+            } else {
+                console.error('Failed to load peers');
+            }
+        }
+
+        function renderPeers(peers) {
+            const container = document.getElementById('peers-list');
+            if (!peers.length) {
+                container.innerHTML = '<p class="empty-message">No peer nodes configured.</p>';
+                return;
+            }
+            const ul = document.createElement('ul');
+            ul.className = 'peer-list';
+            for (const p of peers) {
+                const li = document.createElement('li');
+                li.className = 'peer-item';
+                const peerUrl = p.URL;
+                const peerName = p.Name || peerUrl;
+                const exportedPaths = p.ExportedPaths || [];
+                li.innerHTML = `
+                    <div>
+                        <strong>${escapeHtml(peerName)}</strong><br>
+                        <code>${escapeHtml(peerUrl)}</code><br>
+                        <span class="badge ${p.Verified ? 'verified' : 'unverified'}">${p.Verified ? '✓ Verified' : '⚠ Unverified'}</span>
+                        <span class="peer-type">Type: ${escapeHtml(p.PeerType)}</span>
+                        <div>Exported paths: ${exportedPaths.map(ep => escapeHtml(ep)).join(', ') || 'none'}</div>
+                        <div class="peer-health-status">Health: <span class="health-badge" data-peer-url="${escapeHtml(peerUrl)}">Checking...</span></div>
+                    </div>
+                    <div style="margin-top: 0.5rem;">
+                        <button class="btn-success" style="margin-right: 0.5rem;" data-sync-url="${escapeHtml(peerUrl)}" data-exported-paths='${JSON.stringify(exportedPaths)}'>Sync All</button>
+                        <button class="btn-delete-small" data-delete-url="${escapeHtml(peerUrl)}">Delete</button>
+                    </div>
+                `;
+                ul.appendChild(li);
+            }
+            container.innerHTML = '';
+            container.appendChild(ul);
+
+            const peerItems = container.querySelectorAll('.peer-item');
+            peerItems.forEach(item => {
+                const syncBtn = item.querySelector('.btn-success');
+                const deleteBtn = item.querySelector('.btn-delete-small');
+                const healthSpan = item.querySelector('.health-badge');
+                const peerUrl = syncBtn.getAttribute('data-sync-url');
+                const exportedPaths = JSON.parse(syncBtn.getAttribute('data-exported-paths'));
+
+                syncBtn.onclick = () => syncAllExportedPaths(peerUrl, exportedPaths);
+                deleteBtn.onclick = () => deletePeer(peerUrl);
+                (async () => {
+                    const health = await checkPeerHealth(peerUrl);
+                    if (healthSpan) {
+                        healthSpan.textContent = health === 'up' ? '🟢 Up' : '🔴 Down';
+                        healthSpan.style.color = health === 'up' ? 'green' : 'red';
+                    }
+                })();
+            });
+        }
+
+        async function addPeer() {
+            const url = document.getElementById('peer-url').value.trim();
+            const peerType = document.getElementById('peer-type').value;
+            const statusDiv = document.getElementById('peer-status');
+            if (!url) {
+                statusDiv.textContent = 'URL is required.';
+                statusDiv.className = 'status-message error';
+                return;
+            }
+            statusDiv.textContent = 'Adding peer...';
+            statusDiv.className = 'status-message';
+            try {
+                const response = await fetch('/-/admin/peers/add', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Admin-Token': sessionToken
+                    },
+                    body: JSON.stringify({ url, peer_type: peerType })
+                });
+                if (response.ok) {
+                    statusDiv.textContent = 'Peer added successfully.';
+                    statusDiv.classList.add('success');
+                    document.getElementById('peer-url').value = '';
+                    await loadPeers();
+
+                    const peersResp = await fetch('/-/admin/peers', {
+                        headers: { 'X-Admin-Token': sessionToken }
+                    });
+                    if (peersResp.ok) {
+                        const peers = await peersResp.json();
+                        const newPeer = peers.find(p => p.URL === url);
+                        if (newPeer && newPeer.ExportedPaths && newPeer.ExportedPaths.length) {
+                            if (confirm(`Peer ${newPeer.Name || url} has exported paths. Sync them now?`)) {
+                                await syncAllExportedPaths(url, newPeer.ExportedPaths);
+                            }
+                        }
+                    }
+                } else {
+                    const text = await response.text();
+                    statusDiv.textContent = `Error: ${text}`;
+                    statusDiv.classList.add('error');
+                }
+            } catch (err) {
+                statusDiv.textContent = 'Network error.';
+                statusDiv.classList.add('error');
+            }
+        }
+
+        async function deletePeer(url) {
+            if (!confirm(`Remove peer ${url}?`)) return;
+            const response = await fetch('/-/admin/peers/delete', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Admin-Token': sessionToken
+                },
+                body: JSON.stringify({ url })
+            });
+            if (response.ok) {
+                loadPeers();
+            } else {
+                alert('Failed to delete peer');
+            }
+        }
     </script>
 </body>
 </html>

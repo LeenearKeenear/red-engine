@@ -21,17 +21,50 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Note: We removed the manual Admin Token checks here because
-	// the adminOnly middleware in router.go already secures this endpoint!
-
+	// ---- Decode request first ----
 	var req struct {
 		URL           string `json:"url"`
-		Filename      string `json:"filename"` // Used as the clean directory or path name
+		Filename      string `json:"filename"`
 		SaveToStartup bool   `json:"saveToStartup"`
+		PeerURL       string `json:"peer_url"`
+		RemotePath    string `json:"remote_path"`
 	}
-
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	// ---- Peer‑based sync ----
+	if req.PeerURL != "" && req.RemotePath != "" {
+		destDir := filepath.Join(h.store.DataDir(), req.Filename)
+		if err := h.pullFromPeer(req.PeerURL, req.RemotePath, destDir); err != nil {
+			http.Error(w, "Peer sync failed: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		if err := h.store.Reload(); err != nil {
+			http.Error(w, "Reload after peer sync failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if req.SaveToStartup {
+			h.cfg.Mu.Lock()
+			h.cfg.StartupSync = append(h.cfg.StartupSync, config.RemoteSync{
+				URL:      req.PeerURL + req.RemotePath,
+				Filename: req.Filename,
+			})
+			h.cfg.Mu.Unlock()
+			if err := h.cfg.Save(h.cfgPath); err != nil {
+				http.Error(w, "Saved content but failed to update config: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Peer sync completed to " + destDir))
+		return
+	}
+
+	// ---- Normal URL‑based import (unchanged) ----
+	if req.URL == "" {
+		http.Error(w, "URL required", http.StatusBadRequest)
 		return
 	}
 
@@ -59,27 +92,22 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 	if parsedURL.Host == "github.com" {
 		pathParts := strings.Split(strings.Trim(parsedURL.Path, "/"), "/")
 		if len(pathParts) == 2 {
-			// Auto-convert to a native .git clone URL instead of a ZIP archive
-			// to enable the new delta-pulling engine.
 			repoName := strings.TrimSuffix(pathParts[1], ".git")
 			req.URL = "https://github.com/" + pathParts[0] + "/" + repoName + ".git"
-			parsedURL, _ = url.Parse(req.URL) // Re-parse for downstream logic
+			parsedURL, _ = url.Parse(req.URL)
 		} else if len(pathParts) > 2 && pathParts[2] == "blob" {
-			// If someone pasted a Web UI link to a specific file. Auto-convert to raw text.
 			req.URL = "https://raw.githubusercontent.com/" + pathParts[0] + "/" + pathParts[1] + "/" + strings.Join(pathParts[3:], "/")
 			parsedURL, _ = url.Parse(req.URL)
 		}
 	}
-	// --------------------------------------
 
 	// 2. Directory & Path Sanitization & Auto-Naming
 	targetSubPath := filepath.Clean(req.Filename)
-
 	if targetSubPath == "." || targetSubPath == "" {
 		pathParts := strings.Split(strings.TrimRight(parsedURL.Path, "/"), "/")
 		if len(pathParts) > 0 {
 			if parsedURL.Host == "github.com" && len(pathParts) >= 3 && pathParts[3] == "archive" {
-				targetSubPath = pathParts[2] // Automatically grabs the repo name
+				targetSubPath = pathParts[2]
 			} else {
 				lastPart := pathParts[len(pathParts)-1]
 				lastPart = strings.TrimSuffix(lastPart, ".zip")
@@ -93,15 +121,11 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-
-	// FIX: Remove "remote" from the fallback
 	if targetSubPath == "." || targetSubPath == "" || strings.HasPrefix(targetSubPath, "..") || filepath.IsAbs(targetSubPath) {
 		targetSubPath = "sync-" + time.Now().Format("20060102150405")
 	}
 
-	// Formulate the destination path straight inside the engine's root store directory
 	destinationDir := filepath.Join(h.store.DataDir(), targetSubPath)
-
 	lowerURL := strings.ToLower(req.URL)
 
 	srcType := "raw"
@@ -119,25 +143,21 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		// If it's a single raw markdown file, save it cleanly
+		// raw file
 		if err := os.MkdirAll(filepath.Dir(destinationDir), 0755); err != nil {
 			http.Error(w, "Failed to create directory structure", http.StatusInternalServerError)
 			return
 		}
-
-		// Checks file extension
 		if !strings.HasSuffix(strings.ToLower(destinationDir), ".md") {
 			destinationDir += ".md"
 			targetSubPath += ".md"
 		}
-
 		httpReq, err := http.NewRequest(http.MethodGet, req.URL, nil)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		httpReq.Header.Set("User-Agent", "RED-Engine-Sync/1.0")
-
 		client := &http.Client{Timeout: 15 * time.Second}
 		resp, err := client.Do(httpReq)
 		if err != nil {
@@ -145,32 +165,27 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer resp.Body.Close()
-
 		if resp.StatusCode != http.StatusOK {
 			http.Error(w, "Remote server returned non-OK status", http.StatusBadGateway)
 			return
 		}
-
 		outFile, err := os.Create(destinationDir)
 		if err != nil {
 			http.Error(w, "Failed to create file on disk", http.StatusInternalServerError)
 			return
 		}
 		defer outFile.Close()
-
 		if _, err := io.Copy(outFile, resp.Body); err != nil {
 			http.Error(w, "Failed to write content", http.StatusInternalServerError)
 			return
 		}
 	}
 
-	// 4. Hot-reload the memory map store index
 	if err := h.store.Reload(); err != nil {
 		http.Error(w, "Content updated but failed to update memory index", http.StatusInternalServerError)
 		return
 	}
 
-	// 5. Persist to configuration state if requested
 	if req.SaveToStartup {
 		h.cfg.Mu.Lock()
 		var newSync []config.RemoteSync
@@ -185,7 +200,6 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 		})
 		h.cfg.StartupSync = newSync
 		h.cfg.Mu.Unlock()
-
 		if err := h.cfg.Save(h.cfgPath); err != nil {
 			http.Error(w, "Synced successfully, but config save failed", http.StatusInternalServerError)
 			return
@@ -196,6 +210,7 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Successfully synced to data/" + targetSubPath))
 }
 
+// ... other existing functions (adminConfig, adminRemove) remain unchanged ...
 // --- SECURE DASHBOARD ENDPOINTS ---
 
 func (h *handler) adminConfig(w http.ResponseWriter, r *http.Request) {

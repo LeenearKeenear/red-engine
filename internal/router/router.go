@@ -24,14 +24,6 @@ type handler struct {
 	cfgPath   string
 }
 
-func (h *handler) adminOnly(param any) func(http.ResponseWriter, *http.Request) {
-	panic("unimplemented")
-}
-
-func (h *handler) adminOnly(param any) func(http.ResponseWriter, *http.Request) {
-	panic("unimplemented")
-}
-
 func New(s *store.Store, cfg *config.Config, cfgPath string) http.Handler {
 	var tmpl *template.Template
 	var adminTmpl *template.Template
@@ -81,6 +73,7 @@ func New(s *store.Store, cfg *config.Config, cfgPath string) http.Handler {
 	// Public Routes
 	mux.HandleFunc("/", h.serve)
 	mux.HandleFunc("/-/health", h.health)
+
 	mux.HandleFunc("/-/manifest", h.manifest)
 	mux.HandleFunc("/-/search-index.json", h.searchIndex)
 	mux.HandleFunc("/-/source/", h.source)
@@ -88,14 +81,19 @@ func New(s *store.Store, cfg *config.Config, cfgPath string) http.Handler {
 	mux.HandleFunc("/-/webhook/sync", h.webhookSync)
 	// NEW: Node information and connections
 	mux.HandleFunc("/-/nodeinfo", h.nodeInfo)
+	// Serve raw files from the node's data directory (for peer synchronisation)
+	// This allows other nodes to fetch content using /content/... URLs.
+	mux.Handle("/content/", http.StripPrefix("/content/", http.FileServer(http.Dir(h.store.DataDir()))))
 
 	// Admin UI
 	mux.HandleFunc("/-/admin", h.adminUI)
 	// Contributors management (admin only)
+	mux.HandleFunc("/-/admin/peers/health", h.adminOnly(h.checkPeerHealthHandler))
 	mux.HandleFunc("/-/admin/contributors", h.adminOnly(h.listContributors))
-	mux.HandleFunc("/-/admin/contributors/add", h.adminOnly(h.addContributor))
-	mux.HandleFunc("/-/admin/contributors/delete", h.adminOnly(h.deleteContributor))
+	mux.HandleFunc("/-/admin/contributors/add", h.adminOnly(h.addContributorToDB))
+	mux.HandleFunc("/-/admin/contributors/delete", h.adminOnly(h.revokeContributor))
 	mux.HandleFunc("/-/admin/peers", h.adminOnly(h.listPeers))
+	mux.HandleFunc("/-/admin/peers/refresh", h.adminOnly(h.refreshPeer))
 	mux.HandleFunc("/-/admin/peers/add", h.adminOnly(h.addPeer))
 	mux.HandleFunc("/-/admin/peers/delete", h.adminOnly(h.deletePeer))
 	// Secure routes

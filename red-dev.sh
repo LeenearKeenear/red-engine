@@ -1,5 +1,6 @@
 #!/bin/bash
 # red-dev – RED Engine development launcher (Linux/macOS)
+# Usage: ./red-dev [path/to/config.json]
 
 set -e
 
@@ -8,7 +9,16 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo -e "${GREEN}🚀 Starting RED Engine development environment...${NC}"
+# --- Help ---
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    echo "Usage: $0 [config-file]"
+    echo "  config-file   Path to JSON config file (default: config.json)"
+    exit 0
+fi
+
+# --- Set config path (first argument or default) ---
+CONFIG_PATH="${1:-config.json}"
+echo -e "${GREEN}📁 Using config file: ${CONFIG_PATH}${NC}"
 
 # --- Check prerequisites ---
 command -v go >/dev/null 2>&1 || { echo -e "${RED}❌ Go not found. Please install Go.${NC}"; exit 1; }
@@ -17,7 +27,6 @@ command -v npm >/dev/null 2>&1 || { echo -e "${RED}❌ npm not found. Please ins
 if ! command -v air &>/dev/null; then
     echo -e "${YELLOW}⚠️  air not found. Installing...${NC}"
     go install github.com/air-verse/air@latest
-    # Ensure ~/go/bin is in PATH
     export PATH=$PATH:$(go env GOPATH)/bin
 fi
 
@@ -45,12 +54,13 @@ echo -e "${GREEN}🎨 Starting Tailwind CSS watcher...${NC}"
 npm run watch:tailwind &
 TAILWIND_PID=$!
 
-# --- Start Air with DEV_MODE=true ---
+# --- Start Air with DEV_MODE=true and pass config path ---
 echo -e "${GREEN}🏃 Starting Go server with live reload (DEV_MODE=true)...${NC}"
-DEV_MODE=true air &
+echo -e "${GREEN}   Config argument: -config=${CONFIG_PATH}${NC}"
+DEV_MODE=true air -- -config="${CONFIG_PATH}" &
 AIR_PID=$!
 
 echo -e "${GREEN}✅ Both processes running. Press Ctrl+C to stop.${NC}"
 
-# Wait for either process to exit (normally they run forever)
+# Wait for either process to exit
 wait

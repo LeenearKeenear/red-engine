@@ -10,7 +10,19 @@ import (
 
 func (h *handler) nodeInfo(w http.ResponseWriter, r *http.Request) {
 	// For now, exported paths are empty – later we can fill from registry or config.
+
+	// --- FIX: dynamic exported paths: list top-level directories under dataDir ---
 	exportedPaths := []string{}
+	entries, err := os.ReadDir(h.store.DataDir())
+	if err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				exportedPaths = append(exportedPaths, "/"+entry.Name())
+			}
+		}
+	}
+	// -------------------------------------------------------------------------
+
 	nodeName := h.cfg.NodeName
 	if nodeName == "" {
 		nodeName = h.cfg.SiteName

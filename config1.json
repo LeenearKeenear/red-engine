@@ -1,0 +1,8 @@
+{
+  "addr": ":8080",
+  "siteName": "RED Engine A",
+  "nodeName": "Test Node A",
+  "dataDir": "data",
+  "adminToken": "FLWqR7KN4JmEtNBjOj5Sv4pb",
+  "startupSync": []
+}

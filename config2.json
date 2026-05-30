@@ -1,0 +1,8 @@
+{
+  "addr": ":8081",
+  "siteName": "RED Engine B",
+  "nodeName": "Fake Node B",
+  "dataDir": "data2",
+  "adminToken": "B2rObF855V0pDXHQ1YVh9Q2W",
+  "startupSync": []
+}
