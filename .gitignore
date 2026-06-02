@@ -1,9 +1,11 @@
 // DO NOT REMOVE
 
 red-engine
-red
+!cmd/red
 
 data/
+data1/
+.nodetest/
 registry.db
 .github/discord.yml
 podman-flush.sh
