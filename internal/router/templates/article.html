@@ -1,0 +1,221 @@
+<!-- article.html — server-rendered reader (sidebar + article content) -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ .Site }}{{ if .Title }} — {{ .Title }}{{ end }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    {{if .DevMode}}
+    <script type="module" src="/@vite/client"></script>
+    <script type="module" src="/src/main.js"></script>
+    {{else}}
+    <link rel="stylesheet" href="/static/dist/main.css">
+    {{end}}
+</head>
+<body class="bg-paper-white text-ink-black">
+
+    <!-- Fixed Navbar -->
+    <nav class="fixed left-0 top-0 z-50 h-16 w-full border-b border-sovereign-hover bg-sovereign text-white shadow-[0_2px_8px_rgba(0,0,0,0.35)]">
+        <div class="mx-auto flex h-full max-w-[1400px] items-center justify-between gap-4 px-6">
+            <a href="/" class="whitespace-nowrap font-serif text-[1.625rem] font-bold uppercase tracking-[0.06em] text-white no-underline transition-opacity hover:opacity-80">{{ .Site }}</a>
+            <span class="hidden whitespace-nowrap font-sans text-xs tracking-[0.04em] text-white/55 sm:inline">{{ .NodeName }}</span>
+            <div class="relative w-[280px] max-[640px]:w-[180px]">
+                <input id="search-input" type="text" placeholder="Search articles…" autocomplete="off"
+                    class="w-full rounded border border-white/25 bg-white/10 py-1.5 pl-3 pr-10 font-sans text-[0.8125rem] text-white outline-none transition placeholder:text-white/50 focus:border-white/55 focus:bg-white/20">
+                <span class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-[0.2rem] border border-white/20 bg-white/10 px-1.5 py-0.5 font-sans text-[0.65rem] text-white/45 max-[640px]:hidden">⌘K</span>
+                <div id="search-results" class="hidden absolute left-0 right-0 top-[calc(100%+6px)] z-[60] max-h-[22rem] overflow-y-auto rounded border border-paper-border bg-paper-white shadow-[0_4px_18px_rgba(0,0,0,0.22)]"></div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Sidebar (scoped to the top-level branch) -->
+    {{ $currentPath := .Path }}
+    {{ $topCat := .TopCat }}
+    {{ $branch := index .Nav $topCat }}
+    {{ if $branch }}
+    <aside class="fixed left-0 top-16 z-40 h-[calc(100vh-4rem)] w-[260px] overflow-y-auto border-r border-paper-border bg-paper-light max-[768px]:w-[220px] max-[640px]:-translate-x-full max-[640px]:transition-transform">
+        <div class="px-3.5 py-5">
+            <div class="mb-6">
+                <a href="/{{ $topCat }}"
+                   class="mb-1.5 block border-b border-paper-border px-2 pb-[0.35rem] font-sans text-[0.6875rem] font-bold uppercase tracking-[0.12em] text-sovereign no-underline">{{ $branch.Name }}</a>
+                <div class="flex flex-col gap-[0.1rem]">
+                    {{ range $branch.Articles }}
+                    <a href="{{ .Path }}" class="nav-link{{ if eq .Path $currentPath }} active{{ end }}">{{ .Title }}</a>
+                    {{ end }}
+                    {{ range sortedSubs $branch.Sub }}
+                    {{ if ne (printf "%.1s" .Name) "." }}
+                    <details class="group mt-1.5"{{ range .Articles }}{{ if eq .Path $currentPath }} open{{ end }}{{ end }}{{ range sortedSubs .Sub }}{{ range .Articles }}{{ if eq .Path $currentPath }} open{{ end }}{{ end }}{{ end }}>
+                        <summary class="flex cursor-pointer list-none select-none items-center gap-1.5 py-1 pl-[1.375rem] pr-2 font-sans text-xs font-semibold uppercase tracking-[0.06em] text-ink-muted [&::-webkit-details-marker]:hidden">
+                            <span class="inline-block shrink-0 text-[0.5rem] text-ink-muted transition-transform group-[[open]]:rotate-90">▶</span>{{ humanize .Name }}
+                        </summary>
+                        <div class="flex flex-col gap-[0.1rem] pt-[0.1rem]">
+                            {{ range .Articles }}
+                            <a href="{{ .Path }}" class="nav-link pl-8 text-[0.8125rem]{{ if eq .Path $currentPath }} active{{ end }}">{{ .Title }}</a>
+                            {{ end }}
+                            {{ range sortedSubs .Sub }}
+                            {{ if ne (printf "%.1s" .Name) "." }}
+                            <details class="group mt-1"{{ range .Articles }}{{ if eq .Path $currentPath }} open{{ end }}{{ end }}>
+                                <summary class="flex cursor-pointer list-none select-none items-center gap-1.5 py-1 pl-10 pr-2 font-sans text-xs font-semibold uppercase tracking-[0.06em] text-ink-muted [&::-webkit-details-marker]:hidden">
+                                    <span class="inline-block shrink-0 text-[0.5rem] text-ink-muted transition-transform group-[[open]]:rotate-90">▶</span>{{ humanize .Name }}
+                                </summary>
+                                <div class="flex flex-col gap-[0.1rem] pt-[0.1rem]">
+                                    {{ range .Articles }}
+                                    <a href="{{ .Path }}" class="nav-link pl-12 text-[0.8125rem]{{ if eq .Path $currentPath }} active{{ end }}">{{ .Title }}</a>
+                                    {{ end }}
+                                </div>
+                            </details>
+                            {{ end }}
+                            {{ end }}
+                        </div>
+                    </details>
+                    {{ end }}
+                    {{ end }}
+                </div>
+            </div>
+        </div>
+    </aside>
+    {{ end }}
+
+    <!-- Main Content -->
+    <main class="{{ if $branch }}ml-[260px] max-[768px]:ml-[220px] max-[640px]:ml-0 {{ end }}mt-16 min-h-[calc(100vh-4rem)] bg-paper-white px-8 py-10 max-[768px]:px-4">
+        <div class="mx-auto max-w-[820px]">
+
+            <!-- Breadcrumbs -->
+            {{ if .Crumb }}
+            <div class="mb-6 flex flex-wrap items-center gap-1.5 font-sans text-[0.8125rem] font-medium text-ink-muted [&_a]:whitespace-nowrap">
+                <a href="/" class="text-ink-muted no-underline transition-colors hover:text-sovereign">Home</a>
+                {{ range .Crumb }}
+                <span class="text-paper-border">/</span>
+                {{ if eq .Path $currentPath }}
+                <span class="text-ink-mid">{{ .Label }}</span>
+                {{ else }}
+                <a href="{{ .Path }}" class="text-ink-muted no-underline transition-colors hover:text-sovereign">{{ .Label }}</a>
+                {{ end }}
+                {{ end }}
+            </div>
+            {{ end }}
+
+            <!-- Title + Verification Badge -->
+            <div class="mb-0 flex flex-wrap items-baseline gap-3">
+                <h1 class="mb-2 max-w-full shrink-0 font-serif text-[2.5rem] font-bold leading-[1.2] text-ink-black">{{ .Title }}</h1>
+                {{ $state := .VerificationState }}
+                {{ if eq $state "verified" }}
+                <span class="mt-2 inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded border border-[#86efac] bg-[#f0fdf4] px-2.5 py-1 font-sans text-xs font-semibold text-[#15803d]">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" class="h-[0.85rem] w-[0.85rem]"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                    Verified · {{ .Author }}
+                </span>
+                {{ else if eq $state "tampered" }}
+                <span class="mt-2 inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded border border-[#fca5a5] bg-[#fff1f2] px-2.5 py-1 font-sans text-xs font-semibold text-[#b91c1c]">⚠ Modified After Signing</span>
+                {{ else if eq $state "invalid_sig" }}
+                <span class="mt-2 inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded border border-[#fca5a5] bg-[#fff1f2] px-2.5 py-1 font-sans text-xs font-semibold text-[#b91c1c]">✗ Invalid Signature</span>
+                {{ else if eq $state "untrusted" }}
+                <span class="mt-2 inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded border border-[#fcd34d] bg-[#fffbeb] px-2.5 py-1 font-sans text-xs font-semibold text-[#92400e]">⚠ Untrusted Signer</span>
+                {{ else if eq $state "malformed" }}
+                <span class="mt-2 inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded border border-[#fca5a5] bg-[#fff1f2] px-2.5 py-1 font-sans text-xs font-semibold text-[#b91c1c]">✗ Malformed Signature</span>
+                {{ else if $state }}
+                <span class="mt-2 inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded border border-[#93c5fd] bg-[#eff6ff] px-2.5 py-1 font-sans text-xs font-semibold text-[#1e3a5f]">Unsigned</span>
+                {{ end }}
+            </div>
+
+            <!-- Article Body -->
+            <article class="prose-red mt-7">{{ .Body }}</article>
+
+            <!-- Prev / Next Navigation -->
+            {{ if or .PrevArticle .NextArticle }}
+            <nav class="mt-12 flex items-stretch gap-4 border-t border-paper-border pt-6">
+                {{ if .PrevArticle }}
+                <a href="{{ .PrevArticle.Path }}"
+                    class="flex max-w-[48%] flex-col rounded border border-paper-border bg-paper-white px-[1.125rem] py-3.5 no-underline transition-colors hover:border-paper-hover hover:bg-paper-light">
+                    <span class="mb-1 font-sans text-[0.65rem] font-bold uppercase tracking-[0.1em] text-ink-muted">← Previous</span>
+                    <span class="font-serif text-[1.075rem] font-semibold leading-[1.35] text-sovereign">{{ .PrevArticle.Title }}</span>
+                </a>
+                {{ end }}
+                {{ if .NextArticle }}
+                <a href="{{ .NextArticle.Path }}"
+                    class="ml-auto flex max-w-[48%] flex-col rounded border border-paper-border bg-paper-white px-[1.125rem] py-3.5 text-right no-underline transition-colors hover:border-paper-hover hover:bg-paper-light">
+                    <span class="mb-1 font-sans text-[0.65rem] font-bold uppercase tracking-[0.1em] text-ink-muted">Next →</span>
+                    <span class="font-serif text-[1.075rem] font-semibold leading-[1.35] text-sovereign">{{ .NextArticle.Title }}</span>
+                </a>
+                {{ end }}
+            </nav>
+            {{ end }}
+
+            <!-- Hash Footer -->
+            {{ if .Hash }}
+            <div class="mt-16 border-t border-paper-border pt-6">
+                <div class="flex flex-wrap items-center justify-between gap-3 rounded border border-paper-border bg-paper-light px-4 py-3.5">
+                    <div class="flex items-center gap-1.5 text-ink-muted">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" class="h-[1.125rem] w-[1.125rem]">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7H7a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2V9a2 2 0 00-2-2h-2M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2M9 7h6"/>
+                        </svg>
+                        <span class="font-sans text-[0.6875rem] font-bold uppercase tracking-[0.1em]">SHA-256</span>
+                    </div>
+                    <code class="break-all rounded-[0.2rem] border border-paper-border bg-paper-white px-2 py-0.5 font-mono text-xs text-ink-muted">{{ .Hash }}</code>
+                </div>
+            </div>
+            {{ end }}
+
+        </div>
+    </main>
+
+    <script>
+        let searchIndex = [];
+        fetch('/-/search-index.json')
+            .then(res => res.json())
+            .then(data => { searchIndex = data; })
+            .catch(err => console.error('Failed to load search index', err));
+
+        const searchInput      = document.getElementById('search-input');
+        const resultsContainer = document.getElementById('search-results');
+
+        function escapeHtml(str) {
+            if (str == null) return '';
+            return str.replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+        }
+
+        function runSearch(query) {
+            if (query.length < 2) {
+                resultsContainer.classList.add('hidden');
+                resultsContainer.innerHTML = '';
+                return;
+            }
+            const matches = searchIndex.filter(item =>
+                item.title.toLowerCase().includes(query) ||
+                item.path.toLowerCase().includes(query)
+            ).slice(0, 10);
+
+            if (matches.length === 0) {
+                resultsContainer.innerHTML = '<div class="search-no-results">No results found</div>';
+            } else {
+                resultsContainer.innerHTML = matches.map(item =>
+                    `<a href="${item.path}" class="search-result-item">${escapeHtml(item.title)}</a>`
+                ).join('');
+            }
+            resultsContainer.classList.remove('hidden');
+        }
+
+        if (searchInput) {
+            searchInput.addEventListener('input', e => runSearch(e.target.value.trim().toLowerCase()));
+            document.addEventListener('click', e => {
+                if (!searchInput.contains(e.target) && !resultsContainer.contains(e.target)) {
+                    resultsContainer.classList.add('hidden');
+                }
+            });
+            document.addEventListener('keydown', e => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+                    e.preventDefault();
+                    searchInput.focus();
+                    searchInput.select();
+                }
+                if (e.key === 'Escape') {
+                    resultsContainer.classList.add('hidden');
+                    searchInput.blur();
+                }
+            });
+        }
+    </script>
+</body>
+</html>

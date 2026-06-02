@@ -4,13 +4,23 @@
   "description": "RED Engine with Tailwind CSS",
   "main": "index.js",
   "scripts": {
+    "dev": "vite",
+    "build": "vite build",
     "build:tailwind": "tailwindcss -i ./internal/router/static/tailwind-input.css -o ./internal/router/static/tailwind.css --minify",
     "watch:tailwind": "tailwindcss -i ./internal/router/static/tailwind-input.css -o ./internal/router/static/tailwind.css --watch"
   },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.0.0"
+  },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.0",
+    "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.19",
     "postcss": "^8.4.38",
-    "tailwindcss": "^3.4.3"
+    "tailwindcss": "^4.3.0",
+    "vite": "^8.0.16"
   },
   "author": "",
   "license": "ISC"

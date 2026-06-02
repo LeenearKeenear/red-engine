@@ -1,14 +1,32 @@
 package router
 
 import (
-	"html/template"
+	"encoding/json"
+	"log"
 	"net/http"
+	"os"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/RED-Collective/red-engine/internal/models"
+	"github.com/RED-Collective/red-engine/internal/registry"
 )
+
+func (h *handler) siteName() string {
+	if s := registry.GetSetting("site_name"); s != "" {
+		return s
+	}
+	return "RED Engine"
+}
+
+func (h *handler) nodeName() string {
+	if n := registry.GetSetting("node_name"); n != "" {
+		return n
+	}
+	name, _ := os.Hostname()
+	return name
+}
 
 func capitalize(s string) string {
 	s = strings.ReplaceAll(s, "-", " ")
@@ -23,80 +41,137 @@ func capitalize(s string) string {
 func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 
-	// Handle home page routing
-	if path == "/" {
-		path = "/root"
-	}
-
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	topCat := ""
-	if parts[0] != "" {
-		topCat = parts[0]
-	}
-
-	d := models.PageData{
-		Site:     h.cfg.SiteName,
-		NodeName: h.cfg.NodeName,
-		Nav:      h.store.Root(),
-		Path:     path,
-		TopCat:   topCat,
-	}
-
-	switch {
-	case path == "/root":
-		d.Body = template.HTML(`<div class="article"><h1>` + h.cfg.SiteName + `</h1><p>The free practical knowledge base. Choose a topic from the sidebar.</p></div>`)
-
-	case len(parts) == 1 && topCat != "root":
-		sec, ok := h.store.Root()[topCat]
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		d.Title = capitalize(topCat)
-		d.Crumb = []models.Crumb{{Label: capitalize(topCat), Path: "/" + topCat}}
-		d.Body = template.HTML(sectionHTML(sec))
-
-	default:
-		// First, check if the requested path is a markdown Article
-		art := h.store.Get(path)
-		if art == nil {
-			if strings.HasSuffix(path, ".md") {
-				clean := strings.TrimSuffix(path, ".md")
-				art = h.store.Get(clean)
-			}
-		}
-
-		if art != nil {
-			d.Title = capitalize(parts[len(parts)-1])
-
-			// MERGED FROM PROJECT-RED: Remove .md from the UI title
-			d.Title = strings.TrimSuffix(d.Title, ".md")
-
-			d.Crumb = buildCrumbs(parts)
-			d.Body = art.Body
-			d.Verified = art.Verified
-			d.Author = art.Author
-			d.Hash = art.Hash
-			d.VerificationError = art.VerificationError
-		} else {
-			// If it's not an article, check if it's a Sub-Directory
-			sec := h.store.GetSection(path)
-			if sec != nil {
-				d.Title = capitalize(parts[len(parts)-1])
-				d.Crumb = buildCrumbs(parts)
-				d.Body = template.HTML(sectionHTML(sec))
-			} else {
-				// If neither file nor folder exists, return 404
+	// Block any path segment starting with "." (covers .meta, .assets, .git, etc.)
+	if path != "/" {
+		for _, seg := range strings.Split(strings.Trim(path, "/"), "/") {
+			if strings.HasPrefix(seg, ".") {
 				http.NotFound(w, r)
 				return
 			}
 		}
 	}
 
-	if err := h.tmpl.ExecuteTemplate(w, "base.html", d); err != nil {
-		http.Error(w, "template error: "+err.Error(), 500)
+	// Calculate depth (number of URL path segments).
+	var parts []string
+	if path == "/" {
+		parts = []string{}
+	} else {
+		parts = strings.Split(strings.Trim(path, "/"), "/")
+	}
+	depth := len(parts)
+
+	switchDepth := h.cfg.TemplateSwitchDepth
+	if switchDepth <= 0 {
+		switchDepth = 2
+	}
+
+	siteName := h.siteName()
+	d := models.PageData{
+		Site:     siteName,
+		NodeName: h.nodeName(),
+		Nav:      h.store.Root(),
+		Path:     path,
+		Depth:    depth,
+		DevMode:  h.devMode,
+	}
+	if len(parts) > 0 {
+		d.TopCat = parts[0]
+	}
+
+	// ── Article lookup (takes priority over hub pages) ─────────────────
+	if path != "/" {
+		art := h.store.Get(path)
+		if art == nil && strings.HasSuffix(path, ".md") {
+			art = h.store.Get(strings.TrimSuffix(path, ".md"))
+		}
+		if art != nil {
+			d.Title = art.Title
+			d.Body = art.Body
+			d.Verified = art.Verified
+			d.Author = art.Author
+			d.Hash = art.Hash
+			d.VerificationError = art.VerificationError
+			d.VerificationState = art.VerificationState
+			d.Crumb = buildCrumbs(parts)
+			d.PrevArticle, d.NextArticle = h.findSiblings(path, parts)
+
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if err := h.articleTmpl.ExecuteTemplate(w, "article.html", d); err != nil {
+				http.Error(w, "template error: "+err.Error(), 500)
+			}
+			return
+		}
+	}
+
+	// ── Hub page ────────────────────────────────────────────────────────
+	var sec *models.Section
+	if path == "/" {
+		// Synthetic root section — all top-level sections become cards.
+		allSubs := h.store.Root()
+		filtered := make(map[string]*models.Section, len(allSubs))
+		for k, v := range allSubs {
+			if k != "root" {
+				filtered[k] = v
+			}
+		}
+		sec = &models.Section{
+			Name: siteName,
+			Path: "/",
+			Sub:  filtered,
+		}
+	} else {
+		sec = h.store.GetSection(path)
+	}
+
+	if sec == nil {
+		// Last chance: serve non-markdown static files sitting openly in data/.
+		http.NotFound(w, r)
 		return
 	}
+
+	d.Section = sec
+	if len(parts) > 0 {
+		d.Title = capitalize(parts[len(parts)-1])
+		d.Crumb = buildCrumbs(parts)
+	} else {
+		d.Title = siteName
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if depth < switchDepth {
+		if err := h.mainTmpl.ExecuteTemplate(w, "main.html", d); err != nil {
+			http.Error(w, "template error: "+err.Error(), 500)
+		}
+	} else {
+		if err := h.sub1Tmpl.ExecuteTemplate(w, "sub1.html", d); err != nil {
+			http.Error(w, "template error: "+err.Error(), 500)
+		}
+	}
+}
+
+// findSiblings returns the previous and next articles in the same section as path.
+func (h *handler) findSiblings(path string, parts []string) (*models.Article, *models.Article) {
+	if len(parts) < 2 {
+		return nil, nil
+	}
+	parentPath := "/" + strings.Join(parts[:len(parts)-1], "/")
+	sec := h.store.GetSection(parentPath)
+	if sec == nil {
+		return nil, nil
+	}
+	for i, a := range sec.Articles {
+		if a.Path == path {
+			var prev, next *models.Article
+			if i > 0 {
+				prev = sec.Articles[i-1]
+			}
+			if i < len(sec.Articles)-1 {
+				next = sec.Articles[i+1]
+			}
+			return prev, next
+		}
+	}
+	return nil, nil
 }
 
 func buildCrumbs(parts []string) []models.Crumb {
@@ -109,14 +184,12 @@ func buildCrumbs(parts []string) []models.Crumb {
 	return crumbs
 }
 
+// sectionHTML is kept as a fallback for any legacy call sites; unused by main routing.
 func sectionHTML(sec *models.Section) string {
 	var b strings.Builder
-	b.Grow(1024)
-
 	b.WriteString(`<div class="section-index"><h1>`)
 	b.WriteString(capitalize(sec.Name))
 	b.WriteString(`</h1><ul>`)
-
 	for _, a := range sec.Articles {
 		b.WriteString(`<li><a href="`)
 		b.WriteString(a.Path)
@@ -124,22 +197,123 @@ func sectionHTML(sec *models.Section) string {
 		b.WriteString(a.Title)
 		b.WriteString(`</a></li>`)
 	}
-	b.WriteString(`</ul>`)
+	b.WriteString(`</ul></div>`)
+	return b.String()
+}
 
-	for _, sub := range sec.Sub {
-		b.WriteString(`<h2>`)
-		b.WriteString(capitalize(sub.Name))
-		b.WriteString(`</h2><ul>`)
-		for _, a := range sub.Articles {
-			b.WriteString(`<li><a href="`)
-			b.WriteString(a.Path)
-			b.WriteString(`">`)
-			b.WriteString(a.Title)
-			b.WriteString(`</a></li>`)
-		}
-		b.WriteString(`</ul>`)
+// Ensure sectionHTML is referenced to avoid compile errors.
+var _ = sectionHTML
+
+// contentAPI serves article data as JSON for the React SPA.
+// GET /api/content?path=<url-path>
+func (h *handler) contentAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":"missing path"}`))
+		return
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
 	}
 
-	b.WriteString(`</div>`)
-	return b.String()
+	// Block hidden segments (.assets, .meta, etc.)
+	for _, seg := range strings.Split(strings.Trim(path, "/"), "/") {
+		if strings.HasPrefix(seg, ".") {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+	}
+
+	isDirectory := false
+
+	// Step 1: direct leaf article lookup.
+	art := h.store.Get(path)
+	if art == nil && strings.HasSuffix(path, ".md") {
+		art = h.store.Get(strings.TrimSuffix(path, ".md"))
+	}
+
+	// Step 2: directory default – RED_KNOWLEDGE fallback.
+	if art == nil {
+		art = h.store.Get(path + "/RED_KNOWLEDGE")
+		if art != nil {
+			isDirectory = true
+		}
+	}
+
+	if art == nil {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"error":"not found"}`))
+		return
+	}
+
+	// Rewrite relative asset src to absolute /-/assets/ URLs.
+	artPathParts := strings.Split(strings.TrimPrefix(art.Path, "/"), "/")
+	dirPath := strings.Join(artPathParts[:len(artPathParts)-1], "/")
+	bodyStr := string(art.Body)
+	if dirPath != "" {
+		bodyStr = strings.ReplaceAll(bodyStr, `src=".assets/`, `src="/-/assets/`+dirPath+`/`)
+	}
+
+	// Crumbs use the requested path (not the internal RED_KNOWLEDGE path).
+	var pathParts []string
+	if path != "/" {
+		pathParts = strings.Split(strings.Trim(path, "/"), "/")
+	}
+	crumbs := buildCrumbs(pathParts)
+
+	prev, next := h.findSiblings(art.Path, artPathParts)
+
+	type articleRef struct {
+		Title string `json:"title"`
+		Path  string `json:"path"`
+	}
+	type crumbJSON struct {
+		Label string `json:"label"`
+		Path  string `json:"path"`
+	}
+	type response struct {
+		Title             string      `json:"title"`
+		BodyHTML          string      `json:"body_html"`
+		VerificationState string      `json:"verification_state"`
+		Author            string      `json:"author"`
+		Hash              string      `json:"hash"`
+		Crumb             []crumbJSON `json:"crumb"`
+		PrevArticle       *articleRef `json:"prev_article"`
+		NextArticle       *articleRef `json:"next_article"`
+		IsDirectory       bool        `json:"is_directory"`
+	}
+
+	// For directory defaults (RED_KNOWLEDGE), derive title from the directory name
+	// since the file itself may lack a heading, making art.Title just "RED_KNOWLEDGE".
+	title := art.Title
+	if isDirectory && (title == "RED_KNOWLEDGE" || title == "") {
+		title = capitalize(pathParts[len(pathParts)-1])
+	}
+
+	resp := response{
+		Title:             title,
+		BodyHTML:          bodyStr,
+		VerificationState: art.VerificationState,
+		Author:            art.Author,
+		Hash:              art.Hash,
+		IsDirectory:       isDirectory,
+		Crumb:             make([]crumbJSON, 0, len(crumbs)),
+	}
+	for _, c := range crumbs {
+		resp.Crumb = append(resp.Crumb, crumbJSON{Label: c.Label, Path: c.Path})
+	}
+	if prev != nil {
+		resp.PrevArticle = &articleRef{Title: prev.Title, Path: prev.Path}
+	}
+	if next != nil {
+		resp.NextArticle = &articleRef{Title: next.Title, Path: next.Path}
+	}
+
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("contentAPI: encode error: %v", err)
+	}
 }

@@ -25,9 +25,11 @@ Project R.E.D. systematically dismantles the architectural vulnerabilities inher
 
 * **Eradicating the Single Point of Failure:** Open platforms rely mainly on a master domain, creating a massive target for corporate lawfare and global de‑indexing. R.E.D. operates as a stateless containerised engine, eliminating the centralized attack vector entirely.
 * **Eliminating Financial Conflicts:** R.E.D. requires zero centralized funding, ensuring information remains free from commercial manipulation, corporate de‑indexing, and review‑bombing botnets.  
-  **Ethical Node Monetization (Optional):** Individual node operators may choose to earn back their costs by including affiliate links or donation addresses within the guides they host. The revenue goes directly to the operator who maintains the node – never to a central entity. Readers can freely choose a different node if they prefer an ad‑free experience. No special code is needed: operators simply create a `Requirements.md` file inside a guide’s folder listing necessary parts (with their affiliate links), and link to it from the guide’s main `index.md` or introductory file. This keeps monetization transparent, decentralized, and entirely opt‑in.
+
 * **Outsourcing Content Curation & Bot Defense:** Centralized platforms collapse trying to independently build anti‑bot algorithms and content moderation teams. R.E.D. outsources the social layer to multi‑billion dollar ecosystems like Reddit or Discord. By relying on networks with existing phone‑verification and automated bot mitigation, R.E.D. bypasses the need for a non‑profit to design complex, native bot‑detection firewalls.
+
 * **Bypassing Dependency Hell:** B.L.U.E. enforces a rigid, linear learning hierarchy where a single obsolete foundational guide can collapse the entire structure. R.E.D. prevents this by leveraging native filesystem directories and dynamic versioning, allowing knowledge to adapt organically without cascading failures.
+
 * **Resolving the “Spin‑Off” Paradox:** B.L.U.E. mandates one definitive guide per topic, yet paradoxically suggests forking contested guides during internal disputes, guaranteeing a fractured, redundant database. R.E.D. removes moderation logic from the runtime entirely; the end‑user’s local client seamlessly curates the best version based on established network consensus.
 
 ## 3. Core Architectural Counter‑Measures
@@ -57,12 +59,13 @@ R.E.D. completely eliminates the threat of unauthorised guide modification using
 
 This mechanism requires **no database** – the verification is purely file‑based, stateless, and auditable.
 
-### B. Stateless Immunity to DDoS and Subpoenas
+### B. Minimal Attack Surface
 
-Centralized sites are easy targets for DDoS attacks and corporate subpoenas because they rely on massive, active SQL/NoSQL databases.
+Centralized sites are easy targets for DDoS attacks and corporate subpoenas because they rely on massive, active SQL/NoSQL databases holding user data, session state, and platform logic.
 
-- The R.E.D. engine is **stateless**. It possesses no database layer to exploit, breach, corrupt, or subpoena.
-- Because it serves raw Markdown natively from file storage, it operates with minimal memory overhead and zero database lookup latency. Containers can be replicated instantly across alternative IP addresses.
+- The R.E.D. engine's **content layer is stateless**. Every guide is a raw Markdown file on disk — there is no user database, no session store, no content-management schema to subpoena or breach.
+- A lightweight SQLite database (`registry.db`) stores only operational metadata: sync source registry, node settings, and the navigation index. It contains no user data and can be wiped and rebuilt from the filesystem at any time.
+- Because content is served natively from file storage, the engine operates with minimal memory overhead and near-zero lookup latency. Containers can be replicated instantly across alternative IP addresses.
 
 ### C. Instant Decentralized Mirroring (Import API)
 
@@ -74,13 +77,14 @@ A sovereign network is only as strong as its ability to replicate data rapidly.
 
 ### D. Admin Panel & Token Protection
 
-- The admin panel is available at `/-/admin` and is protected by a random `adminToken` generated during installation.
+- The admin panel is available at `/-/admin` and is protected by a random `adminToken` set during installation.
 - From the panel you can:
-  - Import new knowledge bases (single files, GitHub repos, archives).
-  - List all currently synced sources.
-  - Remove a source and optionally delete its local files.
-  - Persist import rules to `config.json` so they are re‑synced on container start.
-- Use the provided `manage-token.sh` (Linux/macOS) or `manage-token.ps1` (Windows) scripts to regenerate the admin token at any time.
+  - Import new knowledge bases (single files, GitHub/Gitea repos, archives).
+  - List all currently synced sources and remove them with optional local file deletion.
+  - Browse the navigation index and trigger a filesystem rescan.
+  - Edit node settings (site name, node name) without restarting.
+- If no admin token is configured, the node starts in **read‑only lockdown** — content is served but the admin panel returns 401. No credentials are auto‑generated silently.
+- Rotate the admin token at any time: `./setup.sh token`
 
 ## 4. Architecture: Single‑Container Deployment (Clearnet Only)
 
@@ -110,71 +114,56 @@ All components run as standard Podman (or Docker) containers, orchestrated via `
 
 ### Prerequisites
 - **Podman** (recommended) or **Docker** (with `docker compose` V2)
+- **Go 1.21+** (only needed for local development and tests)
 - **Git**
-- **Bash** (Linux/macOS) or **PowerShell** (Windows)
+- **Bash**
 
-### Automatic Installation
+### First‑Time Setup
 
-#### Linux / macOS
-```bash
-curl -sSL https://raw.githubusercontent.com/RED-Collective/red-engine/main/install-red-engine.sh | bash
-```
-Or clone and run manually:
+Clone the repository and run the setup wizard:
+
 ```bash
 git clone https://github.com/RED-Collective/red-engine.git
 cd red-engine
-./install-red-engine.sh
+./setup.sh
 ```
 
-#### Windows (PowerShell as Administrator)
-```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force
-iex (irm https://raw.githubusercontent.com/RED-Collective/red-engine/main/install-red-engine.ps1)
-```
+The wizard will:
+1. Ask for your listen address and data directory.
+2. Ask for a site name (freely changeable at any time).
+3. Warn you about node name permanence and require acknowledgement before proceeding.
+4. Generate a cryptographically random 32‑character admin token.
+5. Write credentials to `.env` (the resilient primary store) and `config.json`.
+6. Build the container image and start the node.
 
-The installer will:
-- Clone the repository (if not already inside it).
-- Create the `./data` directory.
-- Generate a `config.json` with a cryptographically random `adminToken` (displayed once).
-- Start the container using `podman-compose up --build -d` (or fallback to `docker compose`).
-- Show the node URL (`http://localhost`) and admin panel URL (`http://localhost/-/admin`).
+After setup the node is reachable at:
+- **Direct:** `http://localhost:8080`
+- **Via Caddy (production):** `http://localhost` (port 80 / 443)
+- **Admin panel:** `http://localhost:8080/-/admin`
 
-### Manual Setup (Docker/Podman)
+### Common Commands
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/RED-Collective/red-engine.git
-   cd red-engine
-   ```
+| Command | What it does |
+|---|---|
+| `./setup.sh` | First‑time wizard (or show status if already configured) |
+| `./setup.sh test` | Run the full Go test suite |
+| `./setup.sh dev` | Start dev server with live reload |
+| `./setup.sh install` | Build container image and start production node |
+| `./setup.sh update` | Pull latest code, run tests, rebuild, restart |
+| `./setup.sh token` | Rotate the admin token |
+| `./setup.sh backup` | Tar the `./data` directory into `./backups/` |
+| `./setup.sh status` | Show container status and health check |
 
-2. **Prepare configuration**
-   ```bash
-   cp config.json.example config.json   # or let the installer create it
-   # Edit config.json – set a strong adminToken, adjust dataDir if needed
-   ```
+### Credential Resilience
 
-3. **Build and start**
-   ```bash
-   podman-compose up --build -d
-   # or: docker compose up --build -d
-   ```
+Credentials are stored in two places intentionally:
 
-4. **Verify**
-   - Node: `http://localhost`
-   - Admin panel: `http://localhost/-/admin` (use the token from `config.json`)
+- **`.env`** — the primary resilient store, read automatically by Docker/Podman Compose.
+- **`config.json`** — optional bootstrap file for the binary.
 
-### Managing the Admin Token
-```bash
-# Linux/macOS
-./manage-token.sh
+If `config.json` is deleted or corrupted, the node continues operating normally using the env vars from `.env`. If both are absent, the node starts in **read‑only lockdown** (content served, admin panel disabled) until credentials are restored.
 
-# Windows
-.\manage-token.ps1
-```
-The script reads `config.json`, displays the current token, and optionally generates a new secure token. After changing the token, restart the container:
-```bash
-podman-compose restart red_engine
-```
+Environment variables (`RED_ADMIN_TOKEN`, `RED_WEBHOOK_SECRET`, `RED_ADDR`, `RED_DATA_DIR`) always override `config.json` values.
 
 ## 7. Simulating Knowledge Base Structures
 

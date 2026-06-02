@@ -1,77 +1,86 @@
-# red-dev.ps1 – RED Engine development environment (Windows)
+<#
+.SYNOPSIS
+    red-dev.ps1 – RED Engine development launcher (Windows)
+.DESCRIPTION
+    Usage: .\red-dev.ps1 [path\to\config.json]
+#>
 
 param(
-    [string]$Config = "config.json",
-    [switch]$Help
+    [Parameter(Position=0)]
+    [string]$ConfigPath = "config.json"
 )
 
-if ($Help) {
-    Write-Host "Usage: .\red-dev.ps1 [OPTIONS]"
-    Write-Host ""
-    Write-Host "Options:"
-    Write-Host "  --config, -c <file>   Path to configuration file (default: config.json)"
-    Write-Host "  --help, -h            Show this help message"
-    exit 0
-}
+# Set encoding for proper character display
+$OutputEncoding = [System.Text.Encoding]::UTF8
 
-Write-Host "🚀 Starting RED Engine development environment..." -ForegroundColor Green
-Write-Host "📄 Using configuration file: $Config" -ForegroundColor Green
+$CSS_IN = "internal/router/static/tailwind-input.css"
+$CSS_OUT = "internal/router/static/tailwind.css"
 
-# --- Dependency checks ---
-if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
-    Write-Host "❌ Go not found. Please install Go." -ForegroundColor Red
+# --- Check prerequisites ---
+if (!(Get-Command go -ErrorAction SilentlyContinue)) {
+    Write-Host "[✗] Go not found. Please install Go from https://golang.org/" -ForegroundColor Red
     exit 1
 }
-if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-    Write-Host "❌ npm not found. Please install Node.js." -ForegroundColor Red
+if (!(Get-Command npm -ErrorAction SilentlyContinue)) {
+    Write-Host "[✗] npm not found. Please install Node.js from https://nodejs.org/" -ForegroundColor Red
     exit 1
 }
-if (-not (Get-Command air -ErrorAction SilentlyContinue)) {
-    Write-Host "⚠️  air not found. Installing..." -ForegroundColor Yellow
+
+# --- Check and Install Air ---
+if (!(Get-Command air -ErrorAction SilentlyContinue)) {
+    Write-Host "[!] air not found. Installing..." -ForegroundColor Yellow
     go install github.com/air-verse/air@latest
-    # Add GOPATH/bin to PATH for this session if needed
-    $goPath = go env GOPATH
-    $env:Path = "$goPath\bin;$env:Path"
+    $goBin = Join-Path $(go env GOPATH) "bin"
+    if ($env:Path -notlike "*$goBin*") {
+        $env:Path += ";$goBin"
+    }
 }
+
+Write-Host "📁 Using config file: $ConfigPath" -ForegroundColor Green
 
 # --- Install dependencies ---
 Write-Host "📦 Installing Go dependencies..." -ForegroundColor Green
 go mod download
 
-if (-not (Test-Path "node_modules")) {
+if (!(Test-Path "node_modules")) {
     Write-Host "📦 Installing npm dependencies..." -ForegroundColor Green
     npm install
 }
 
-# --- Start background jobs ---
-Write-Host "🎨 Starting Tailwind CSS watcher..." -ForegroundColor Green
-$tailwindJob = Start-Job -ScriptBlock {
-    Set-Location $using:PWD
-    npm run watch:tailwind
-}
+# --- Start Processes ---
+# We use a background job for Tailwind to allow its output to stream or run silently,
+# while keeping the primary Air process in the foreground for interactive debugging.
+
+Write-Host "🎨 Building Tailwind CSS..." -ForegroundColor Green
+$env:NODE_OPTIONS = "--no-deprecation"
+& npx @tailwindcss/cli -i $CSS_IN -o $CSS_OUT --minify
+
+Write-Host "📡 Starting Tailwind CSS watcher..." -ForegroundColor Green
+$TailwindProc = Start-Process npx -ArgumentList "@tailwindcss/cli -i $CSS_IN -o $CSS_OUT --watch" -NoNewWindow -PassThru
 
 Write-Host "🏃 Starting Go server with live reload (DEV_MODE=true)..." -ForegroundColor Green
-# Set environment variables for the Air process
+Write-Host "   Config argument: -config=$ConfigPath" -ForegroundColor Green
+
+# Set environment variable for the current session
 $env:DEV_MODE = "true"
-$env:RED_CONFIG = $Config
-$airJob = Start-Job -ScriptBlock {
-    Set-Location $using:PWD
-    # Pass the environment variables explicitly (they are inherited from the parent)
-    air
-}
 
-Write-Host "✅ Both processes running. Press Ctrl+C to stop." -ForegroundColor Green
-
-# Wait for Ctrl+C
 try {
-    # Wait indefinitely until user presses Ctrl+C
-    Wait-Event -Timeout ([System.Threading.Timeout]::Infinite)
+    if (Test-Path ".air.dev.toml") {
+        # Execute air with the provided config
+        & air -c .air.dev.toml -- -config="$ConfigPath"
+    }
+    else {
+        Write-Host "[!] No Air config found. Starting with go run..." -ForegroundColor Yellow
+        & go run ./cmd/red/main.go -config="$ConfigPath"
+    }
+}
+catch {
+    Write-Host "`n[!] Server interrupted." -ForegroundColor Yellow
 }
 finally {
     Write-Host "`n🛑 Shutting down processes..." -ForegroundColor Yellow
-    Stop-Job $tailwindJob -ErrorAction SilentlyContinue
-    Stop-Job $airJob -ErrorAction SilentlyContinue
-    Remove-Job $tailwindJob -ErrorAction SilentlyContinue
-    Remove-Job $airJob -ErrorAction SilentlyContinue
+    if ($TailwindProc -and !$TailwindProc.HasExited) {
+        Stop-Process -Id $TailwindProc.Id -Force -ErrorAction SilentlyContinue
+    }
     Write-Host "✅ Development environment stopped." -ForegroundColor Green
 }

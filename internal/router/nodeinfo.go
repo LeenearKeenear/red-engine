@@ -6,12 +6,10 @@ import (
 	"os"
 
 	"github.com/RED-Collective/red-engine/internal/node"
+	"github.com/RED-Collective/red-engine/internal/registry"
 )
 
 func (h *handler) nodeInfo(w http.ResponseWriter, r *http.Request) {
-	// For now, exported paths are empty – later we can fill from registry or config.
-
-	// --- FIX: dynamic exported paths: list top-level directories under dataDir ---
 	exportedPaths := []string{}
 	entries, err := os.ReadDir(h.store.DataDir())
 	if err == nil {
@@ -21,22 +19,14 @@ func (h *handler) nodeInfo(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// -------------------------------------------------------------------------
 
-	nodeName := h.cfg.NodeName
-	if nodeName == "" {
-		nodeName = h.cfg.SiteName
-	}
-	if nodeName == "" {
-		nodeName, _ = os.Hostname()
-	}
-	version := "v1.2.0" // This is to embed version from build
+	version := "v1.2.0"
 
-	info, err := node.GetNodeInfo(nodeName, version, exportedPaths)
-	if err != nil {
-		http.Error(w, "Node identity not ready", http.StatusInternalServerError)
-		return
-	}
+	info := node.GetNodeInfo(h.nodeName(), version, exportedPaths)
+	// Self-reported networking metadata, sourced from node_settings.
+	info.PublicURL = registry.GetSetting("public_url")
+	info.TunnelType = registry.GetSetting("tunnel_type")
+	info.Description = registry.GetSetting("node_description")
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(info); err != nil {

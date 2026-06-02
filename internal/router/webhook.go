@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/RED-Collective/red-engine/internal/config"
 	"github.com/RED-Collective/red-engine/internal/fetch"
+	"github.com/RED-Collective/red-engine/internal/registry"
 )
 
 type githubWebhookPayload struct {
@@ -33,12 +33,10 @@ func verifySignature(secret string, payload []byte, signatureHeader string) bool
 	if !strings.HasPrefix(signatureHeader, "sha256=") {
 		return false
 	}
-
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(payload)
 	expectedMAC := mac.Sum(nil)
 	expectedSignature := "sha256=" + hex.EncodeToString(expectedMAC)
-
 	return hmac.Equal([]byte(signatureHeader), []byte(expectedSignature))
 }
 
@@ -55,21 +53,21 @@ func (h *handler) webhookSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.cfg.WebhookSecret == "" {
-		log.Println("🚨 Webhook blocked: WebhookSecret is not configured. Webhooks are disabled for security.")
+		log.Println("Webhook blocked: WebhookSecret is not configured. Webhooks are disabled for security.")
 		http.Error(w, "Webhooks disabled: no secret configured", http.StatusForbidden)
 		return
 	}
 
 	sig := r.Header.Get("X-Hub-Signature-256")
 	if !verifySignature(h.cfg.WebhookSecret, bodyBytes, sig) {
-		log.Println("🚨 Security Alert: Blocked webhook payload with invalid signature!")
+		log.Println("Security Alert: Blocked webhook payload with invalid signature!")
 		http.Error(w, "Unauthorized: Invalid Signature", http.StatusUnauthorized)
 		return
 	}
 
 	var payload githubWebhookPayload
 	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-		log.Printf("⚠️ Failed to decode webhook payload: %v", err)
+		log.Printf("Failed to decode webhook payload: %v", err)
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
@@ -85,17 +83,19 @@ func (h *handler) webhookSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	normalizedIncoming := normalizeURL(incomingURL)
-	log.Printf("🔄 Webhook verified for repository: %s", normalizedIncoming)
+	log.Printf("Webhook verified for repository: %s", normalizedIncoming)
 
 	go func() {
 		h.store.BeginRemoteSync()
 		defer h.store.EndRemoteSync()
 
+		syncList, err := registry.ListStartupSync()
+		if err != nil {
+			log.Printf("Webhook: failed to read startup sync list: %v", err)
+			return
+		}
+
 		successCount := 0
-		h.cfg.Mu.RLock()
-		syncList := make([]config.RemoteSync, len(h.cfg.StartupSync))
-		copy(syncList, h.cfg.StartupSync)
-		h.cfg.Mu.RUnlock()
 		for _, sync := range syncList {
 			normalizedTarget := normalizeURL(sync.URL)
 			if !strings.HasPrefix(normalizedTarget, normalizedIncoming) {
@@ -103,27 +103,27 @@ func (h *handler) webhookSync(w http.ResponseWriter, r *http.Request) {
 			}
 
 			srcType := "raw"
-			if strings.HasSuffix(strings.ToLower(sync.URL), ".git") {
+			lowerURL := strings.ToLower(sync.URL)
+			if strings.HasSuffix(lowerURL, ".git") {
 				srcType = "git"
-			} else if strings.HasSuffix(strings.ToLower(sync.URL), ".tar.gz") {
+			} else if strings.HasSuffix(lowerURL, ".tar.gz") {
 				srcType = "tar.gz"
-			} else if strings.HasSuffix(strings.ToLower(sync.URL), ".zip") {
+			} else if strings.HasSuffix(lowerURL, ".zip") {
 				srcType = "zip"
 			}
 
 			destDir := filepath.Join(h.store.DataDir(), filepath.Base(filepath.Clean(sync.Filename)))
-			log.Printf("📥 Webhook triggering delta pull for: %s", sync.Filename)
+			log.Printf("Webhook triggering delta pull for: %s", sync.Filename)
 
 			changedFiles, err := fetch.PullDelta(sync.URL, srcType, destDir)
 			if err != nil {
-				log.Printf("⚠️ Failed to sync %s: %v", sync.Filename, err)
+				log.Printf("Failed to sync %s: %v", sync.Filename, err)
 			} else {
 				successCount++
-
 				if changedFiles == nil {
 					h.store.Reload()
 				} else if len(changedFiles) > 0 {
-					log.Printf("⚡ Hot-Patching %d modified files...", len(changedFiles))
+					log.Printf("Hot-patching %d modified files...", len(changedFiles))
 					if err := h.store.UpdateFiles(changedFiles); err != nil {
 						h.store.Reload()
 					}
@@ -132,7 +132,7 @@ func (h *handler) webhookSync(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if successCount == 0 {
-			log.Println("⚠️ Webhook finished, but no matching tracked repositories were found.")
+			log.Println("Webhook finished, but no matching tracked repositories were found.")
 		}
 	}()
 

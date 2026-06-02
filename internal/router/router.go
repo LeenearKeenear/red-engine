@@ -6,10 +6,17 @@ import (
 	"embed"
 	"html/template"
 	"io/fs"
+	"log"
 	"net/http"
-	"os" // <-- for DEV_MODE check
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/RED-Collective/red-engine/internal/config"
+	"github.com/RED-Collective/red-engine/internal/models"
+	"github.com/RED-Collective/red-engine/internal/navigation"
+	"github.com/RED-Collective/red-engine/internal/registry"
 	"github.com/RED-Collective/red-engine/internal/store"
 )
 
@@ -17,41 +24,68 @@ import (
 var files embed.FS
 
 type handler struct {
-	store     *store.Store
-	tmpl      *template.Template
-	adminTmpl *template.Template
-	cfg       *config.Config
-	cfgPath   string
+	store       *store.Store
+	mainTmpl    *template.Template
+	sub1Tmpl    *template.Template
+	articleTmpl *template.Template
+	adminTmpl   *template.Template
+	nodesTmpl   *template.Template
+	cfg         *config.Config
+	navService  *navigation.Service
+	devMode     bool
 }
 
-func New(s *store.Store, cfg *config.Config, cfgPath string) http.Handler {
-	var tmpl *template.Template
-	var adminTmpl *template.Template
+var tmplFuncs = template.FuncMap{
+	// sortedSubs returns subsections sorted by name, skipping the internal "root" key.
+	"sortedSubs": func(sub map[string]*models.Section) []*models.Section {
+		keys := make([]string, 0, len(sub))
+		for k := range sub {
+			if k != "root" {
+				keys = append(keys, k)
+			}
+		}
+		sort.Strings(keys)
+		out := make([]*models.Section, 0, len(keys))
+		for _, k := range keys {
+			out = append(out, sub[k])
+		}
+		return out
+	},
+	// humanize converts a raw folder name to a display string.
+	"humanize": func(s string) string {
+		s = strings.ReplaceAll(s, "-", " ")
+		s = strings.ReplaceAll(s, "_", " ")
+		if s == "" {
+			return s
+		}
+		return strings.ToUpper(s[:1]) + s[1:]
+	},
+	// articleCount returns total article count for a section (direct + sub).
+	"articleCount": func(sec *models.Section) int {
+		count := len(sec.Articles)
+		for _, sub := range sec.Sub {
+			count += len(sub.Articles)
+		}
+		return count
+	},
+}
+
+func New(s *store.Store, cfg *config.Config) http.Handler {
 	var staticFS http.FileSystem
 
 	devMode := os.Getenv("DEV_MODE") == "true"
 
-	if devMode {
-		// ---------- DEV MODE: read templates and static files from disk ----------
-		// Templates: parse from disk each time (or cache with a watcher, but simple re-parse on every request is fine for dev)
-		// To avoid parsing on every request, we'll wrap the template loading in a function that re-parses when files change.
-		// For simplicity, we'll use a helper that re-parses on each request (acceptable for development).
-		// But we can also parse once and rely on air/restart – your choice.
-		// Here we parse once from disk (still requires restart on template change, but static files are live).
-		// For true live template reload, we can implement a custom loader. Let's keep it simple: parse once from disk.
-		// If you modify a template, restart the server (Ctrl+C, then go run). Air will automate that later.
-		basePath := "internal/router/templates/base.html"
-		adminPath := "internal/router/templates/admin.html"
-		tmpl = template.Must(template.ParseFiles(basePath))
-		adminTmpl = template.Must(template.ParseFiles(adminPath))
+	parse := func(name string) *template.Template {
+		t := template.New("").Funcs(tmplFuncs)
+		if devMode {
+			return template.Must(t.ParseFiles("internal/router/templates/" + name))
+		}
+		return template.Must(t.ParseFS(files, "templates/"+name))
+	}
 
-		// Static files from disk
+	if devMode {
 		staticFS = http.Dir("internal/router/static")
 	} else {
-		// ---------- PRODUCTION MODE: use embedded files ----------
-		tmpl = template.Must(template.ParseFS(files, "templates/base.html"))
-		adminTmpl = template.Must(template.ParseFS(files, "templates/admin.html"))
-
 		embedded, err := fs.Sub(files, "static")
 		if err != nil {
 			panic(err)
@@ -60,34 +94,61 @@ func New(s *store.Store, cfg *config.Config, cfgPath string) http.Handler {
 	}
 
 	h := &handler{
-		store:     s,
-		tmpl:      tmpl,
-		adminTmpl: adminTmpl,
-		cfg:       cfg,
-		cfgPath:   cfgPath,
+		store:       s,
+		mainTmpl:    parse("main.html"),
+		sub1Tmpl:    parse("sub1.html"),
+		articleTmpl: parse("article.html"),
+		adminTmpl:   parse("admin.html"),
+		nodesTmpl:   parse("nodes.html"),
+		cfg:         cfg,
+		devMode:     devMode,
+	}
+
+	// Initialise navigation service if registry DB is available.
+	if db := registry.GetDB(); db != nil {
+		if err := navigation.InitNavSchema(db); err != nil {
+			log.Printf("[Navigation] Schema init failed: %v", err)
+		} else {
+			h.navService = navigation.NewService(db, s.DataDir())
+			go func() {
+				if _, err := h.navService.ScanDataDirectories(); err != nil {
+					log.Printf("[Navigation] Initial scan failed: %v", err)
+				}
+			}()
+		}
 	}
 
 	mux := http.NewServeMux()
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(staticFS)))
 
-	// Public Routes
-	mux.HandleFunc("/", h.serve)
-	mux.HandleFunc("/-/health", h.health)
+	// Serve Vite-built SPA assets (index.html references /assets/... at root level)
+	if distFS, err := fs.Sub(files, "static/dist"); err == nil {
+		mux.Handle("/assets/", http.FileServer(http.FS(distFS)))
+	}
 
+	mux.HandleFunc("/", h.spaIndex)
+	mux.HandleFunc("/-/health", h.health)
 	mux.HandleFunc("/-/manifest", h.manifest)
 	mux.HandleFunc("/-/search-index.json", h.searchIndex)
 	mux.HandleFunc("/-/source/", h.source)
 	mux.HandleFunc("/-/download/", h.download)
 	mux.HandleFunc("/-/webhook/sync", h.webhookSync)
-	// NEW: Node information and connections
 	mux.HandleFunc("/-/nodeinfo", h.nodeInfo)
-	// Serve raw files from the node's data directory (for peer synchronisation)
-	// This allows other nodes to fetch content using /content/... URLs.
+	// /-/nodes is now a React SPA route; serve the shell so direct visits and
+	// refreshes render client-side. The JSON it consumes lives at /-/peers and
+	// /-/nodeinfo (registered separately, untouched).
+	mux.HandleFunc("/-/nodes", h.spaIndex)
+	mux.HandleFunc("/-/peers", h.publicPeers)
+	mux.HandleFunc("/-/announce/challenge", h.announceChallenge)
+	mux.HandleFunc("/-/announce/confirm", h.announceConfirm)
+	mux.HandleFunc("/-/branch-meta/", h.branchMeta)
+	mux.HandleFunc("/-/assets/", h.assetFile)
 	mux.Handle("/content/", http.StripPrefix("/content/", http.FileServer(http.Dir(h.store.DataDir()))))
 
-	// Admin UI
-	mux.HandleFunc("/-/admin", h.adminUI)
-	// Contributors management (admin only)
+	// /-/admin (exact path) is the React SPA route; subpaths below remain the
+	// real admin JSON API. ServeMux matches /-/admin exactly, so /-/admin/* are
+	// unaffected.
+	mux.HandleFunc("/-/admin", h.spaIndex)
 	mux.HandleFunc("/-/admin/peers/health", h.adminOnly(h.checkPeerHealthHandler))
 	mux.HandleFunc("/-/admin/contributors", h.adminOnly(h.listContributors))
 	mux.HandleFunc("/-/admin/contributors/add", h.adminOnly(h.addContributorToDB))
@@ -96,39 +157,44 @@ func New(s *store.Store, cfg *config.Config, cfgPath string) http.Handler {
 	mux.HandleFunc("/-/admin/peers/refresh", h.adminOnly(h.refreshPeer))
 	mux.HandleFunc("/-/admin/peers/add", h.adminOnly(h.addPeer))
 	mux.HandleFunc("/-/admin/peers/delete", h.adminOnly(h.deletePeer))
-	// Secure routes
 	mux.HandleFunc("/-/reload", h.adminOnly(h.reload))
 	mux.HandleFunc("/-/import", h.adminOnly(h.importRemote))
 	mux.HandleFunc("/-/admin/config", h.adminOnly(h.adminConfig))
 	mux.HandleFunc("/-/admin/remove", h.adminOnly(h.adminRemove))
+	// Navigation API
+	mux.HandleFunc("/api/navigation", h.navAPI)
+	mux.HandleFunc("/-/admin/navigation/rescan", h.adminOnly(h.navRescan))
+	mux.HandleFunc("/-/admin/navigation/folder/description", h.adminOnly(h.navFolderDescription))
+
+	// React SPA JSON APIs
+	mux.HandleFunc("/api/content", h.contentAPI)
+	mux.HandleFunc("/api/recent-files", h.recentFiles)
+	mux.HandleFunc("/-/admin/verify", h.adminOnly(h.adminVerify))
 
 	return mux
 }
 
-// adminOnly is the security middleware that protects endpoints from unauthorized access
 func (h *handler) adminOnly(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get("X-Admin-Token")
-
 		if token == "" || h.cfg.AdminToken == "" {
 			http.Error(w, "Unauthorized: Missing Token", http.StatusUnauthorized)
 			return
 		}
-
 		expectedHash := sha256.Sum256([]byte(h.cfg.AdminToken))
 		providedHash := sha256.Sum256([]byte(token))
 		if subtle.ConstantTimeCompare(providedHash[:], expectedHash[:]) != 1 {
 			http.Error(w, "Unauthorized: Invalid Token", http.StatusUnauthorized)
 			return
 		}
-
 		next(w, r)
 	}
 }
 
 func (h *handler) adminUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.adminTmpl.ExecuteTemplate(w, "admin.html", nil); err != nil {
+	d := models.PageData{DevMode: h.devMode}
+	if err := h.adminTmpl.ExecuteTemplate(w, "admin.html", d); err != nil {
 		http.Error(w, "Admin template execution error: "+err.Error(), 500)
 	}
 }
@@ -138,10 +204,84 @@ func (h *handler) reload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
 	if err := h.store.Reload(); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// branchMeta serves .meta/ assets for hub card design.
+// URL: /-/branch-meta/{path}/cover.jpg  or  /-/branch-meta/{path}/icon.svg
+// Maps to: data/{path}/.meta/{file}
+func (h *handler) branchMeta(w http.ResponseWriter, r *http.Request) {
+	suffix := strings.TrimPrefix(r.URL.Path, "/-/branch-meta/")
+	if strings.Contains(suffix, "..") {
+		http.NotFound(w, r)
+		return
+	}
+	parts := strings.Split(suffix, "/")
+	if len(parts) < 2 {
+		http.NotFound(w, r)
+		return
+	}
+	fileName := parts[len(parts)-1]
+	if fileName != "cover.jpg" && fileName != "icon.svg" {
+		http.NotFound(w, r)
+		return
+	}
+	dirParts := parts[:len(parts)-1]
+	for _, p := range dirParts {
+		if strings.HasPrefix(p, ".") || p == "" {
+			http.NotFound(w, r)
+			return
+		}
+	}
+	filePath := filepath.Join(append([]string{h.store.DataDir()}, append(dirParts, ".meta", fileName)...)...)
+	http.ServeFile(w, r, filePath)
+}
+
+// assetFile serves inline images embedded in markdown articles.
+// URL: /-/assets/{dirPath}/{filename}
+// Maps to: data/{dirPath}/.assets/{filename}
+// spaIndex serves the React SPA shell (static/dist/index.html) for all browser-navigation paths.
+// In dev mode with no built dist, it falls back to the legacy Go template renderer.
+func (h *handler) spaIndex(w http.ResponseWriter, r *http.Request) {
+	content, err := files.ReadFile("static/dist/index.html")
+	if err != nil {
+		// SPA not built yet — fall back to Go templates so the server is usable
+		// without running npm run build first (e.g. during backend-only development).
+		h.serve(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(content)
+}
+
+func (h *handler) adminVerify(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Write([]byte(`{"status":"ok"}`))
+}
+
+func (h *handler) assetFile(w http.ResponseWriter, r *http.Request) {
+	suffix := strings.TrimPrefix(r.URL.Path, "/-/assets/")
+	if strings.Contains(suffix, "..") {
+		http.NotFound(w, r)
+		return
+	}
+	parts := strings.Split(suffix, "/")
+	if len(parts) < 2 {
+		http.NotFound(w, r)
+		return
+	}
+	fileName := parts[len(parts)-1]
+	dirParts := parts[:len(parts)-1]
+	for _, p := range parts {
+		if strings.HasPrefix(p, ".") || p == "" {
+			http.NotFound(w, r)
+			return
+		}
+	}
+	filePath := filepath.Join(append([]string{h.store.DataDir()}, append(dirParts, ".assets", fileName)...)...)
+	http.ServeFile(w, r, filePath)
 }

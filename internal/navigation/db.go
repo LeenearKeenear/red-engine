@@ -1,0 +1,260 @@
+package navigation
+
+import (
+	"database/sql"
+	"fmt"
+	"log"
+	"strings"
+	"time"
+)
+
+// InitNavSchema creates the navigation tables and indexes in db.
+// Uses IF NOT EXISTS so it is safe to call on an already-initialised database.
+func InitNavSchema(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS nav_folders (
+			id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+			path               TEXT    UNIQUE NOT NULL,
+			parent_id          INTEGER,
+			display_name       TEXT    NOT NULL,
+			description        TEXT    DEFAULT '',
+			description_source TEXT    DEFAULT 'auto',
+			is_leaf            BOOLEAN DEFAULT 0,
+			child_count        INTEGER DEFAULT 0,
+			guide_count        INTEGER DEFAULT 0,
+			content_type       TEXT    DEFAULT '',
+			last_scanned       DATETIME,
+			created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY(parent_id) REFERENCES nav_folders(id)
+		);
+		CREATE TABLE IF NOT EXISTS nav_guides (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			folder_id     INTEGER NOT NULL,
+			file_name     TEXT    NOT NULL,
+			file_path     TEXT    UNIQUE NOT NULL,
+			title         TEXT    DEFAULT '',
+			preview       TEXT    DEFAULT '',
+			word_count    INTEGER DEFAULT 0,
+			last_modified DATETIME,
+			FOREIGN KEY(folder_id) REFERENCES nav_folders(id) ON DELETE CASCADE
+		);
+		CREATE TABLE IF NOT EXISTS nav_description_overrides (
+			id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+			folder_id          INTEGER NOT NULL UNIQUE,
+			custom_description TEXT    NOT NULL,
+			override_by        TEXT    DEFAULT '',
+			override_date      DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY(folder_id) REFERENCES nav_folders(id) ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_nav_folders_path         ON nav_folders(path);
+		CREATE INDEX IF NOT EXISTS idx_nav_folders_parent       ON nav_folders(parent_id);
+		CREATE INDEX IF NOT EXISTS idx_nav_folders_content_type ON nav_folders(content_type);
+		CREATE INDEX IF NOT EXISTS idx_nav_guides_folder        ON nav_guides(folder_id);
+		CREATE INDEX IF NOT EXISTS idx_nav_guides_file_path     ON nav_guides(file_path);
+	`)
+	if err != nil {
+		return fmt.Errorf("nav schema init: %w", err)
+	}
+
+	// Backward-compatible column additions. SQLite has no ADD COLUMN IF NOT
+	// EXISTS, so each is wrapped to ignore the duplicate-column error on
+	// databases that already have it.
+	addNavColumn(db, "nav_folders", "sort_order", "INTEGER DEFAULT 0")
+	addNavColumn(db, "nav_folders", "hide_from_nav", "BOOLEAN DEFAULT 0")
+
+	log.Println("[Navigation] Schema ready")
+	return nil
+}
+
+// addNavColumn runs an ALTER TABLE ADD COLUMN, ignoring the error raised when
+// the column is already present (so it is safe to call on every startup).
+func addNavColumn(db *sql.DB, table, col, def string) {
+	_, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, col, def))
+	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		log.Printf("[Navigation] add column %s.%s: %v", table, col, err)
+	}
+}
+
+// GetNavigationTree returns a folder with its full subtree populated recursively.
+func (s *Service) GetNavigationTree(path string) (*NavNode, error) {
+	var node NavNode
+	err := s.db.QueryRow(`
+		SELECT id, path, display_name,
+		       COALESCE(description,''), COALESCE(description_source,'auto'),
+		       is_leaf, child_count, guide_count, COALESCE(content_type,'')
+		FROM nav_folders WHERE path = ?`, path).
+		Scan(&node.ID, &node.Path, &node.DisplayName, &node.Description,
+			&node.DescriptionSrc, &node.IsLeaf, &node.ChildCount,
+			&node.GuideCount, &node.ContentType)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("folder not found: %s", path)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query nav_folders: %w", err)
+	}
+	if !node.IsLeaf {
+		children, err := s.getChildren(s.db, node.ID)
+		if err != nil {
+			return nil, err
+		}
+		node.Children = children
+	}
+	return &node, nil
+}
+
+func (s *Service) getChildren(dbtx DBTX, parentID int64) ([]NavNode, error) {
+	rows, err := dbtx.Query(`
+		SELECT id, path, display_name,
+		       COALESCE(description,''), COALESCE(description_source,'auto'),
+		       is_leaf, child_count, guide_count, COALESCE(content_type,'')
+		FROM nav_folders WHERE parent_id = ? ORDER BY display_name`, parentID)
+	if err != nil {
+		return nil, fmt.Errorf("query children: %w", err)
+	}
+	defer rows.Close()
+
+	var children []NavNode
+	for rows.Next() {
+		var c NavNode
+		if err := rows.Scan(&c.ID, &c.Path, &c.DisplayName, &c.Description,
+			&c.DescriptionSrc, &c.IsLeaf, &c.ChildCount, &c.GuideCount, &c.ContentType); err != nil {
+			log.Printf("[Navigation] scan child row: %v", err)
+			continue
+		}
+		if !c.IsLeaf {
+			sub, err := s.getChildren(dbtx, c.ID)
+			if err == nil {
+				c.Children = sub
+			}
+		}
+		children = append(children, c)
+	}
+	return children, rows.Err()
+}
+
+// GetNavigationFlat returns an ordered flat list of folders, optionally filtered
+// by path prefix and/or content_type (vault name).
+func (s *Service) GetNavigationFlat(path, contentType string) ([]NavNode, error) {
+	q := `SELECT id, path, display_name, COALESCE(description,''),
+	             is_leaf, child_count, guide_count, COALESCE(content_type,'')
+	      FROM nav_folders`
+	var args []any
+	var where []string
+	if path != "" {
+		where = append(where, "path LIKE ?")
+		args = append(args, path+"%")
+	}
+	if contentType != "" {
+		where = append(where, "content_type = ?")
+		args = append(args, contentType)
+	}
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	q += " ORDER BY path"
+
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query nav_folders flat: %w", err)
+	}
+	defer rows.Close()
+
+	var nodes []NavNode
+	for rows.Next() {
+		var n NavNode
+		if err := rows.Scan(&n.ID, &n.Path, &n.DisplayName, &n.Description,
+			&n.IsLeaf, &n.ChildCount, &n.GuideCount, &n.ContentType); err != nil {
+			log.Printf("[Navigation] scan flat row: %v", err)
+			continue
+		}
+		nodes = append(nodes, n)
+	}
+	return nodes, rows.Err()
+}
+
+// upsertFolder inserts or updates a folder record; returns its stable ID.
+func (s *Service) upsertFolder(dbtx DBTX, path, displayName, description, contentType string, parentID *int64, isLeaf bool) (int64, error) {
+	_, err := dbtx.Exec(`
+		INSERT INTO nav_folders
+			(path, parent_id, display_name, description, description_source, is_leaf, content_type, last_scanned)
+		VALUES (?, ?, ?, ?, 'auto', ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(path) DO UPDATE SET
+			display_name  = excluded.display_name,
+			is_leaf       = excluded.is_leaf,
+			content_type  = excluded.content_type,
+			last_scanned  = excluded.last_scanned
+	`, path, parentID, displayName, description, isLeaf, contentType)
+	if err != nil {
+		return 0, fmt.Errorf("upsert folder %s: %w", path, err)
+	}
+	var id int64
+	if err := dbtx.QueryRow(`SELECT id FROM nav_folders WHERE path = ?`, path).Scan(&id); err != nil {
+		return 0, fmt.Errorf("fetch id for %s: %w", path, err)
+	}
+	return id, nil
+}
+
+// upsertGuide inserts or updates an indexed .md file record.
+func (s *Service) upsertGuide(dbtx DBTX, folderID int64, fileName, filePath, title, preview string, wordCount int, lastModified time.Time) error {
+	_, err := dbtx.Exec(`
+		INSERT INTO nav_guides (folder_id, file_name, file_path, title, preview, word_count, last_modified)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(file_path) DO UPDATE SET
+			title         = excluded.title,
+			preview       = excluded.preview,
+			word_count    = excluded.word_count,
+			last_modified = excluded.last_modified
+	`, folderID, fileName, filePath, title, preview, wordCount, lastModified)
+	return err
+}
+
+// updateAggregates recalculates child_count and guide_count for every folder.
+func (s *Service) updateAggregates(dbtx DBTX) error {
+	if _, err := dbtx.Exec(`
+		UPDATE nav_folders SET child_count = (
+			SELECT COUNT(*) FROM nav_folders c WHERE c.parent_id = nav_folders.id
+		)`); err != nil {
+		return fmt.Errorf("update child_count: %w", err)
+	}
+	if _, err := dbtx.Exec(`
+		UPDATE nav_folders SET guide_count = (
+			SELECT COUNT(*) FROM nav_guides g WHERE g.folder_id = nav_folders.id
+		) WHERE is_leaf = 1`); err != nil {
+		return fmt.Errorf("update guide_count: %w", err)
+	}
+	return nil
+}
+
+// GetFolderByID retrieves a single folder by its database ID.
+func (s *Service) GetFolderByID(id int64) (*NavNode, error) {
+	var n NavNode
+	err := s.db.QueryRow(`
+		SELECT id, path, display_name, COALESCE(description,''),
+		       is_leaf, child_count, guide_count, COALESCE(content_type,'')
+		FROM nav_folders WHERE id = ?`, id).
+		Scan(&n.ID, &n.Path, &n.DisplayName, &n.Description,
+			&n.IsLeaf, &n.ChildCount, &n.GuideCount, &n.ContentType)
+	if err != nil {
+		return nil, err
+	}
+	return &n, nil
+}
+
+// SetFolderDescription persists a custom description override and updates the folder record.
+func (s *Service) SetFolderDescription(folderID int64, description, overrideBy string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO nav_description_overrides (folder_id, custom_description, override_by)
+		VALUES (?, ?, ?)
+		ON CONFLICT(folder_id) DO UPDATE SET
+			custom_description = excluded.custom_description,
+			override_by        = excluded.override_by,
+			override_date      = CURRENT_TIMESTAMP
+	`, folderID, description, overrideBy)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`
+		UPDATE nav_folders SET description = ?, description_source = 'override' WHERE id = ?`,
+		description, folderID)
+	return err
+}
