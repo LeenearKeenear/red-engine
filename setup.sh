@@ -62,8 +62,9 @@ token_gen() {
 
 env_get() {
     # Read a variable from .env without sourcing the file
+    # Returns empty string (exit 0) when key is absent — grep returning 1 must not kill the caller.
     local key="$1"
-    grep -E "^${key}=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-
+    grep -E "^${key}=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true
 }
 
 env_set() {
@@ -104,11 +105,44 @@ cmd_test() {
 
 cmd_dev() {
     require_go
+    command -v npm &>/dev/null || die "npm not found. Please install Node.js from https://nodejs.org/"
+
+    local config_path="${1:-$CONFIG_FILE}"
     header "Starting development server"
-    if [ ! -f "red-dev.sh" ]; then
-        die "red-dev.sh not found. Are you running from the project root?"
+
+    if ! command -v air &>/dev/null; then
+        warn "air not found. Installing..."
+        go install github.com/air-verse/air@latest
+        export PATH=$PATH:$(go env GOPATH)/bin
     fi
-    exec bash red-dev.sh "${1:-$CONFIG_FILE}"
+
+    info "Installing Go dependencies..."
+    go mod download
+
+    if [ ! -d "node_modules" ]; then
+        info "Installing npm dependencies..."
+        npm install --legacy-peer-deps
+    fi
+
+    cleanup_dev() {
+        echo -e "\n${YELLOW}Shutting down processes...${NC}"
+        kill "$VITE_PID" 2>/dev/null || true
+        success "Development environment stopped."
+    }
+    trap cleanup_dev EXIT INT TERM
+
+    info "Starting Vite dev server on :5173 (Vue + Tailwind + HMR)..."
+    NODE_OPTIONS='--disable-warning=DEP0205' npx vite &
+    VITE_PID=$!
+
+    warn "Open http://localhost:5173 in your browser."
+    info "Starting Go server with live reload (DEV_MODE=true, config=${config_path})..."
+    if [ -f ".air.dev.toml" ]; then
+        DEV_MODE=true air -c .air.dev.toml -- -config="${config_path}"
+    else
+        warn "No Air config found. Starting with go run..."
+        DEV_MODE=true go run ./cmd/red/main.go -config="${config_path}"
+    fi
 }
 
 cmd_status() {

@@ -1,9 +1,9 @@
 
-# Project R.E.D.
+# Project R.E.D Network
 
 ## Sovereign Knowledge Node Engine
 
-Project R.E.D. rejects both centralized database monopolies and overly complex distributed consensus protocols. Instead, it systematically decouples the **Independent Data Layer** from the **Social Curation Layer**.
+Project R.E.D Network rejects both centralized database monopolies and overly complex distributed consensus protocols. Instead, it systematically decouples the **Independent Data Layer** from the **Social Curation Layer**.
 
 The engine operates as a stateless, high‑performance Go runtime that compiles raw Markdown files into visually polarized technical templates, dynamically injecting cryptographic integrity signatures on every request loop.
 
@@ -21,7 +21,7 @@ While noble in its intent to provide universal free education, all centralized s
 
 ## 2. How R.E.D. Fixes That
 
-Project R.E.D. systematically dismantles the architectural vulnerabilities inherent in centralized knowledge repositories.
+Project R.E.D Network systematically dismantles the architectural vulnerabilities inherent in centralized knowledge repositories.
 
 * **Eradicating the Single Point of Failure:** Open platforms rely mainly on a master domain, creating a massive target for corporate lawfare and global de‑indexing. R.E.D. operates as a stateless containerised engine, eliminating the centralized attack vector entirely.
 * **Eliminating Financial Conflicts:** R.E.D. requires zero centralized funding, ensuring information remains free from commercial manipulation, corporate de‑indexing, and review‑bombing botnets.  
@@ -34,11 +34,11 @@ Project R.E.D. systematically dismantles the architectural vulnerabilities inher
 
 ## 3. Core Architectural Counter‑Measures
 
-To address the recurrent theoretical objections regarding security, DDoS attacks, content manipulation, and illegal uploads, the R.E.D. engine uses hard‑coded cryptographic and infrastructure barriers.
+To address the recurrent theoretical objections regarding security, DDoS attacks, content manipulation, and illegal uploads, the R.E.D. Engine uses hard‑coded cryptographic and infrastructure barriers.
 
 ### A. Cryptographic Integrity Verification (Ed25519 + SHA‑256)
 
-R.E.D. completely eliminates the threat of unauthorised guide modification using standard SHA‑256 hashes and **Ed25519 signatures**.
+R.E.D Engine completely eliminates the threat of unauthorised guide modification using standard SHA‑256 hashes and **Ed25519 signatures**.
 
 - Every `.md` file can be accompanied by a `manifest.json` inside its vault folder.  
   Example entry:
@@ -63,7 +63,7 @@ This mechanism requires **no database** – the verification is purely file‑ba
 
 Centralized sites are easy targets for DDoS attacks and corporate subpoenas because they rely on massive, active SQL/NoSQL databases holding user data, session state, and platform logic.
 
-- The R.E.D. engine's **content layer is stateless**. Every guide is a raw Markdown file on disk — there is no user database, no session store, no content-management schema to subpoena or breach.
+- The R.E.D Engine's content layer is **stateless**. Every guide is a raw Markdown file on disk — there is no user database, no session store, no content-management schema to subpoena or breach.
 - A lightweight SQLite database (`registry.db`) stores only operational metadata: sync source registry, node settings, and the navigation index. It contains no user data and can be wiped and rebuilt from the filesystem at any time.
 - Because content is served natively from file storage, the engine operates with minimal memory overhead and near-zero lookup latency. Containers can be replicated instantly across alternative IP addresses.
 
@@ -123,7 +123,7 @@ All components run as standard Podman (or Docker) containers, orchestrated via `
 Clone the repository and run the setup wizard:
 
 ```bash
-git clone https://github.com/RED-Collective/red-engine.git
+git clone https://github.com/RED-Collective/RED-Engine.git
 cd red-engine
 ./setup.sh
 ```
@@ -232,3 +232,56 @@ The creator of the Blue System lamented that he lacked the millions of dollars n
 It’s about time we stop waiting for someone or something to fix our problems for us. No hero is coming.
 
 **Claim Your Agency. Run a Node.**
+
+---
+
+## ⚖️ License & Attribution
+
+**R.E.D-Engine** is part of **Project R.E.D Network** and is licensed under the
+**GNU Affero General Public License v3.0 (AGPL-3.0)** — see [`LICENSE`](./LICENSE).
+
+Per **AGPL-3.0 Section 7(b)**, an additional attribution term applies: any copy,
+modified version, or derivative — **including a modified version operated as a
+network service** — must preserve the credit
+
+> **Powered by [RED Collective](https://github.com/RED-Collective).**
+
+in the notices the software displays to its users (the web UI footer, the server
+startup banner / `--version`, and this README). The exact, binding terms are in
+[`NOTICE.md`](./NOTICE.md). This credit **may not be removed**.
+
+© 2026 RED Collective · <https://github.com/RED-Collective>
+
+---
+
+## Changelog
+
+### 2026-06-02
+
+**Federation & Peer Identity**
+- Peer identity is now anchored to the Ed25519 public key. The registered URL is treated as a mutable secondary property — rotating a tunnel no longer orphans a peer record.
+- Added challenge-response URL re-registration for nodes behind dynamic cloudflared tunnels: a peer requests a single-use nonce (5-minute TTL), signs `nonce|new_url` with its private key, and submits the signature. Constant-time comparison prevents timing attacks; the nonce is deleted on first use to prevent replay.
+- Added gossip import: pulling a peer's public peer list and registering unknown nodes as upstream-only consumers with zero manual configuration.
+- Added peer health history tracking with per-peer last-seen timestamps and sequential failure counts stored in the registry.
+
+**Database Schema (v2)**
+- Migrated `exported_paths` from a serialized column to a normalized `peer_exported_paths` junction table, enabling clean per-path queries without string parsing.
+- Added `UNIQUE` constraint on `peers.public_key` and `CHECK` constraints on `peer_type` (`upstream`, `downstream`, `mirror`) and `tunnel_type` (`cloudflared`, `direct`).
+- Added `startup_sync` health columns: `last_synced_at`, `last_error`, `consecutive_failures`.
+
+**API Layer**
+- Added `/api/content` JSON endpoint: resolves articles (with `RED_KNOWLEDGE` directory-default fallback), rewrites `.assets/` image paths to `/-/assets/` for client rendering, and returns breadcrumbs, prev/next sibling links, and verification state.
+- Added `/api/recent-files` endpoint: walks all sections, sorts by filesystem mtime, returns top N articles with correct display paths for `RED_KNOWLEDGE` defaults.
+- Added `/api/search-index` endpoint: returns full title + path index for client-side search, with no-cache headers.
+- Added `/-/admin/verify` no-op endpoint for admin token validation without performing side effects.
+
+**Frontend**
+- Introduced a React SPA (Vite) served from `static/dist/`. All browser-navigation routes (`/`, `/-/admin`, `/-/nodes`, article paths) serve `static/dist/index.html`. Go templates are retained as a fallback when the SPA is not built.
+- Vite assets served from `/assets/` (dist output) alongside the existing `/-/assets/` content-file handler.
+
+**Content Pipeline**
+- Image src rewriting: bare filenames in Markdown AST (`imageTransformer`) are rewritten to `/-/assets/{dir}/{filename}` at render time. A second pass in `/api/content` rewrites any remaining `.assets/`-relative srcs to absolute paths for the SPA.
+- File watcher (`radovskyb/watcher`) triggers hot-reload of individual articles on change. Remote sync sets a `remoteSyncActive` atomic flag with a 4-second cooldown to suppress redundant local events during pulls.
+
+**Attribution & License**
+- AGPL-3.0 §7(b) attribution ("Powered by RED Collective.") enforced in all UI surfaces: React SPA footer, all five Go templates, and the server startup banner. Tagged `Attribution required by NOTICE (AGPL-3.0 §7(b)) — do not remove` at every insertion point.
