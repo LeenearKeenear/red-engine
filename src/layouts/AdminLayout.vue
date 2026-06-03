@@ -45,5 +45,8 @@ const links = [
     <main class="flex-1 overflow-x-hidden px-6 py-8">
       <RouterView />
     </main>
+    <footer class="fixed bottom-0 right-0 px-4 py-2 text-xs text-ink-muted">
+      Powered by RED Collective
+    </footer>
   </div>
 </template>

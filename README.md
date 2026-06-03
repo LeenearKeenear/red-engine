@@ -248,7 +248,7 @@ network service** — must preserve the credit
 
 in the notices the software displays to its users (the web UI footer, the server
 startup banner / `--version`, and this README). The exact, binding terms are in
-[`NOTICE.md`](./NOTICE.md). This credit **may not be removed**.
+[`ADDITIONAL_TERMS.md`](./ADDITIONAL_TERMS.md).
 
 © 2026 RED Collective · <https://github.com/RED-Collective>
 

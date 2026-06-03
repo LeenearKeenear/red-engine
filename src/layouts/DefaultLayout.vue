@@ -23,5 +23,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKey))
       <RouterView />
     </main>
     <AppSearch :open="searchOpen" @close="searchOpen = false" />
+    <footer class="mt-16 border-t border-line py-6 text-center text-sm text-ink-muted">
+      Powered by RED Collective
+    </footer>
   </div>
 </template>
