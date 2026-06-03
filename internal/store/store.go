@@ -3,8 +3,9 @@ package store
 import (
 	"crypto/ed25519"
 	"crypto/sha256"
+	"database/sql"
+	_ "database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"html/template"
 	"io/fs"
 	"log"
@@ -140,8 +141,33 @@ func (s *Store) Reload() error {
 	if err != nil {
 		return err
 	}
+	s.checkMetaFiles(newNav)
 	s.nav = newNav
 	return nil
+}
+
+func (s *Store) checkMetaFiles(nav map[string]*models.Section) {
+	for name, sec := range nav {
+		if name == "root" {
+			continue
+		}
+		metaDir := filepath.Join(s.dataDir, name, ".meta")
+		if _, err := os.Stat(filepath.Join(metaDir, "cover.jpg")); err == nil {
+			sec.HasCover = true
+		}
+		if _, err := os.Stat(filepath.Join(metaDir, "icon.svg")); err == nil {
+			sec.HasIcon = true
+		}
+		for subName, sub := range sec.Sub {
+			subMeta := filepath.Join(s.dataDir, name, subName, ".meta")
+			if _, err := os.Stat(filepath.Join(subMeta, "cover.jpg")); err == nil {
+				sub.HasCover = true
+			}
+			if _, err := os.Stat(filepath.Join(subMeta, "icon.svg")); err == nil {
+				sub.HasIcon = true
+			}
+		}
+	}
 }
 
 func (s *Store) UpdateFiles(changedPaths []string) error {
@@ -185,9 +211,9 @@ func (s *Store) UpdateFiles(changedPaths []string) error {
 
 func (s *Store) loadSecurityData() (map[string]string, map[string]models.ManifestEntry) {
 	trustedKeys := make(map[string]string)
-	db := registry.GetDB()
-	if db != nil {
-		rows, err := db.Query(`SELECT public_key, name FROM trusted_authors WHERE revoked = 0`)
+	regDB := registry.GetDB()
+	if regDB != nil {
+		rows, err := regDB.Query(`SELECT public_key, name FROM trusted_authors WHERE revoked = 0`)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -198,20 +224,47 @@ func (s *Store) loadSecurityData() (map[string]string, map[string]models.Manifes
 			}
 		}
 	}
+
 	allSignatures := make(map[string]models.ManifestEntry)
 	filepath.WalkDir(s.dataDir, func(path string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && filepath.Base(path) == "manifest.json" {
-			if manifestData, err := os.ReadFile(path); err == nil {
-				manifest := parseManifestJSON(manifestData)
-				relManifestDir, _ := filepath.Rel(s.dataDir, filepath.Dir(path))
-				relManifestDir = filepath.ToSlash(relManifestDir)
-				for key, entry := range manifest {
-					fullKey := filepath.ToSlash(key)
-					if relManifestDir != "." && !strings.HasPrefix(fullKey, relManifestDir+"/") && fullKey != relManifestDir {
-						fullKey = filepath.ToSlash(filepath.Join(relManifestDir, fullKey))
-					}
-					allSignatures[fullKey] = entry
-				}
+		if err != nil || d.IsDir() || filepath.Base(path) != "signer.db" {
+			return nil
+		}
+		if filepath.Base(filepath.Dir(path)) != ".red-signer" {
+			return nil
+		}
+		signerDB, err := sql.Open("sqlite", path)
+		if err != nil {
+			log.Printf("Warning: cannot open signer.db at %s: %v", path, err)
+			return nil
+		}
+		defer signerDB.Close()
+
+		vaultRoot := filepath.Dir(filepath.Dir(path))
+		relDir, _ := filepath.Rel(s.dataDir, vaultRoot)
+		relDir = filepath.ToSlash(relDir)
+
+		rows, err := signerDB.Query(`SELECT path, file_hash, public_key, signature FROM files`)
+		if err != nil {
+			log.Printf("Warning: cannot read signer.db at %s: %v", path, err)
+			return nil
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var filePath, fileHash, pubKey, sig string
+			if err := rows.Scan(&filePath, &fileHash, &pubKey, &sig); err != nil {
+				continue
+			}
+			fullKey := filepath.ToSlash(filePath)
+			if relDir != "." && !strings.HasPrefix(fullKey, relDir+"/") {
+				fullKey = filepath.ToSlash(filepath.Join(relDir, filePath))
+			}
+			allSignatures[fullKey] = models.ManifestEntry{
+				FileHash:  fileHash,
+				Hash:      fileHash,
+				PublicKey: pubKey,
+				Signature: sig,
 			}
 		}
 		return nil
@@ -239,7 +292,7 @@ func (s *Store) processArticle(p string, trustedKeys map[string]string, allSigna
 
 	hashBytes := sha256.Sum256(content)
 	fileHash := hex.EncodeToString(hashBytes[:])
-	res, err := render.Markdown(string(content))
+	res, err := render.Markdown(string(content), cleanPath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -247,6 +300,7 @@ func (s *Store) processArticle(p string, trustedKeys map[string]string, allSigna
 	isVerified := false
 	authorName := "Unverified / Unknown Origin"
 	verifyErr := "File signature not found in manifest"
+	verificationState := "unsigned"
 
 	if entry, exists := allSignatures[relativePath]; exists {
 		entryHash := entry.FileHash
@@ -262,17 +316,22 @@ func (s *Store) processArticle(p string, trustedKeys map[string]string, allSigna
 						isVerified = true
 						authorName = trustedAuthor
 						verifyErr = ""
+						verificationState = "verified"
 					} else {
 						verifyErr = "Invalid Signature: Cryptographic verification failed"
+						verificationState = "invalid_sig"
 					}
 				} else {
 					verifyErr = "Malformed Signature or Public Key data"
+					verificationState = "malformed"
 				}
 			} else {
 				verifyErr = "Untrusted Key: The public key is not mapped in contributors.json"
+				verificationState = "untrusted"
 			}
 		} else {
 			verifyErr = "Hash Mismatch: File content was modified after signing"
+			verificationState = "tampered"
 		}
 	}
 
@@ -289,21 +348,10 @@ func (s *Store) processArticle(p string, trustedKeys map[string]string, allSigna
 		Verified:          isVerified,
 		Author:            authorName,
 		VerificationError: verifyErr,
+		VerificationState: verificationState,
 	}
 
 	return art, parts, nil
-}
-
-func parseManifestJSON(data []byte) map[string]models.ManifestEntry {
-	result := make(map[string]models.ManifestEntry)
-	var wrapped models.Manifest
-	if err := json.Unmarshal(data, &wrapped); err == nil && len(wrapped.Files) > 0 {
-		return wrapped.Files
-	}
-	if err := json.Unmarshal(data, &result); err == nil {
-		return result
-	}
-	return result
 }
 
 // =====================================================================
@@ -369,45 +417,85 @@ func (s *Store) GetSection(path string) *models.Section {
 	path = strings.TrimPrefix(path, "/")
 	parts := strings.Split(path, "/")
 
-	if len(parts) == 1 {
-		return s.nav[parts[0]]
-	} else if len(parts) == 2 {
-		if sec, ok := s.nav[parts[0]]; ok {
-			return sec.Sub[parts[1]]
-		}
+	if len(parts) == 0 {
+		return nil
 	}
-	return nil
+	sec, ok := s.nav[parts[0]]
+	if !ok {
+		return nil
+	}
+	cur := sec
+	for _, subName := range parts[1:] {
+		if cur.Sub == nil {
+			return nil
+		}
+		sub, ok := cur.Sub[subName]
+		if !ok {
+			return nil
+		}
+		cur = sub
+	}
+	return cur
 }
 
 func (s *Store) insertIntoMap(nav map[string]*models.Section, parts []string, art *models.Article) {
+	if len(parts) == 0 {
+		return
+	}
 	if len(parts) == 1 {
 		if nav["root"] == nil {
-			nav["root"] = &models.Section{Name: "root"}
+			nav["root"] = &models.Section{Name: "root", Path: "/"}
 		}
 		nav["root"].Articles = append(nav["root"].Articles, art)
-	} else {
-		secName := parts[0]
-		if nav[secName] == nil {
-			nav[secName] = &models.Section{Name: secName, Sub: make(map[string]*models.Section)}
-		}
-		sec := nav[secName]
-		if len(parts) == 2 {
-			sec.Articles = append(sec.Articles, art)
-		} else {
-			subName := parts[1]
-			if sec.Sub[subName] == nil {
-				sec.Sub[subName] = &models.Section{Name: subName}
-			}
-			sec.Sub[subName].Articles = append(sec.Sub[subName].Articles, art)
+		return
+	}
+
+	secName := parts[0]
+	if nav[secName] == nil {
+		nav[secName] = &models.Section{
+			Name: secName,
+			Path: "/" + secName,
+			Sub:  make(map[string]*models.Section),
 		}
 	}
+	sec := nav[secName]
+
+	if len(parts) == 2 {
+		sec.Articles = append(sec.Articles, art)
+		return
+	}
+
+	// Navigate (or create) sub-sections for parts[1..len-2]; article goes in the last one.
+	cur := sec
+	pathSoFar := "/" + secName
+	for _, subName := range parts[1 : len(parts)-1] {
+		pathSoFar += "/" + subName
+		if cur.Sub == nil {
+			cur.Sub = make(map[string]*models.Section)
+		}
+		if cur.Sub[subName] == nil {
+			cur.Sub[subName] = &models.Section{
+				Name: subName,
+				Path: pathSoFar,
+				Sub:  make(map[string]*models.Section),
+			}
+		}
+		cur = cur.Sub[subName]
+	}
+	cur.Articles = append(cur.Articles, art)
 }
 
 func (s *Store) removeFromMap(nav map[string]*models.Section, parts []string) {
+	if len(parts) == 0 {
+		return
+	}
+
+	artPath := "/" + strings.Join(parts, "/")
+
 	if len(parts) == 1 {
 		if sec, ok := nav["root"]; ok {
 			for i, a := range sec.Articles {
-				if a.Path == "/"+parts[0] {
+				if a.Path == artPath {
 					sec.Articles = append(sec.Articles[:i], sec.Articles[i+1:]...)
 					break
 				}
@@ -416,35 +504,49 @@ func (s *Store) removeFromMap(nav map[string]*models.Section, parts []string) {
 				delete(nav, "root")
 			}
 		}
-	} else if len(parts) == 2 {
-		if sec, ok := nav[parts[0]]; ok {
-			for i, a := range sec.Articles {
-				if a.Path == "/"+parts[0]+"/"+parts[1] {
-					sec.Articles = append(sec.Articles[:i], sec.Articles[i+1:]...)
-					break
-				}
-			}
-			if len(sec.Articles) == 0 && len(sec.Sub) == 0 {
-				delete(nav, parts[0])
-			}
-		}
-	} else if len(parts) == 3 {
-		if sec, ok := nav[parts[0]]; ok {
-			if sub, ok := sec.Sub[parts[1]]; ok {
-				for i, a := range sub.Articles {
-					if a.Path == "/"+parts[0]+"/"+parts[1]+"/"+parts[2] {
-						sub.Articles = append(sub.Articles[:i], sub.Articles[i+1:]...)
-						break
-					}
-				}
-				if len(sub.Articles) == 0 && len(sub.Sub) == 0 {
-					delete(sec.Sub, parts[1])
-				}
-			}
-			if len(sec.Articles) == 0 && len(sec.Sub) == 0 {
-				delete(nav, parts[0])
+		return
+	}
+
+	topName := parts[0]
+	sec, ok := nav[topName]
+	if !ok {
+		return
+	}
+
+	if len(parts) == 2 {
+		for i, a := range sec.Articles {
+			if a.Path == artPath {
+				sec.Articles = append(sec.Articles[:i], sec.Articles[i+1:]...)
+				break
 			}
 		}
+		if len(sec.Articles) == 0 && len(sec.Sub) == 0 {
+			delete(nav, topName)
+		}
+		return
+	}
+
+	// Navigate down to the containing sub-section.
+	cur := sec
+	for _, subName := range parts[1 : len(parts)-1] {
+		if cur.Sub == nil {
+			return
+		}
+		sub, ok := cur.Sub[subName]
+		if !ok {
+			return
+		}
+		cur = sub
+	}
+
+	for i, a := range cur.Articles {
+		if a.Path == artPath {
+			cur.Articles = append(cur.Articles[:i], cur.Articles[i+1:]...)
+			break
+		}
+	}
+	if len(sec.Articles) == 0 && len(sec.Sub) == 0 {
+		delete(nav, topName)
 	}
 }
 
@@ -455,6 +557,10 @@ func (s *Store) Get(path string) *models.Article {
 	path = strings.TrimPrefix(path, "/")
 	parts := strings.Split(path, "/")
 
+	if len(parts) == 0 {
+		return nil
+	}
+
 	if len(parts) == 1 {
 		if sec, ok := s.nav["root"]; ok {
 			for _, a := range sec.Articles {
@@ -463,23 +569,39 @@ func (s *Store) Get(path string) *models.Article {
 				}
 			}
 		}
-	} else if len(parts) == 2 {
-		if sec, ok := s.nav[parts[0]]; ok {
-			for _, a := range sec.Articles {
-				if a.Path == "/"+path {
-					return a
-				}
+		return nil
+	}
+
+	sec, ok := s.nav[parts[0]]
+	if !ok {
+		return nil
+	}
+
+	if len(parts) == 2 {
+		for _, a := range sec.Articles {
+			if a.Path == "/"+path {
+				return a
 			}
 		}
-	} else if len(parts) == 3 {
-		if sec, ok := s.nav[parts[0]]; ok {
-			if sub, ok := sec.Sub[parts[1]]; ok {
-				for _, a := range sub.Articles {
-					if a.Path == "/"+path {
-						return a
-					}
-				}
-			}
+		return nil
+	}
+
+	// Navigate down sub-sections for parts[1..len-2].
+	cur := sec
+	for _, subName := range parts[1 : len(parts)-1] {
+		if cur.Sub == nil {
+			return nil
+		}
+		sub, ok := cur.Sub[subName]
+		if !ok {
+			return nil
+		}
+		cur = sub
+	}
+
+	for _, a := range cur.Articles {
+		if a.Path == "/"+path {
+			return a
 		}
 	}
 	return nil

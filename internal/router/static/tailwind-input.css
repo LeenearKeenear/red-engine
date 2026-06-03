@@ -1,2 +1,302 @@
-@tailwind components;
-@tailwind utilities;
+/* static/tailwind-input.css — R.E.D. Engine, Tailwind v4 source
+   Build:  npx @tailwindcss/cli -i tailwind-input.css -o tailwind.css --minify
+   ------------------------------------------------------------------
+   Design system tokens live in @theme. Repeated UI patterns live in a
+   slim @layer components block. Everything else is utilities, inline in
+   the templates. This file is the single source of truth the demo's
+   red-theme.js mirrors for the in-browser Play CDN. */
+
+@import "tailwindcss";
+
+@theme {
+    /* ── Sovereign palette ─────────────────────────────── */
+    --color-sovereign:        #740010;
+    --color-sovereign-hover:  #5a000c;
+
+    --color-ink-black:  #1b1c1c;
+    --color-ink-mid:    #3a3b3b;
+    --color-ink-muted:  #6b6c6c;
+
+    --color-paper-white:  #fbf9f8;
+    --color-paper-light:  #f0ece8;
+    --color-paper-border: #d8d4cf;
+    --color-paper-hover:  #e4e0db;
+
+    /* ── Type ──────────────────────────────────────────── */
+    --font-serif: 'EB Garamond', Georgia, serif;
+    --font-sans:  'Public Sans', system-ui, -apple-system, sans-serif;
+    --font-mono:  'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+}
+
+@layer base {
+    body {
+        font-family: var(--font-sans);
+        background-color: var(--color-paper-white);
+        color: var(--color-ink-black);
+        overflow-x: hidden;
+    }
+}
+
+@layer components {
+
+    /* ── Buttons ───────────────────────────────────────── */
+    .btn-primary {
+        @apply inline-block cursor-pointer rounded border-0 px-5 py-2 text-sm font-semibold tracking-[0.02em] text-white transition-colors;
+        background-color: var(--color-sovereign);
+        font-family: var(--font-sans);
+    }
+    .btn-primary:hover { background-color: var(--color-sovereign-hover); }
+
+    .btn-success {
+        @apply inline-block cursor-pointer rounded border-0 px-5 py-2 text-sm font-semibold text-white transition-colors;
+        background-color: #15803d;
+        font-family: var(--font-sans);
+    }
+    .btn-success:hover { background-color: #166534; }
+
+    .btn-secondary {
+        @apply inline-block cursor-pointer rounded px-3.5 py-1.5 text-[0.8125rem] font-medium transition-colors;
+        background-color: var(--color-paper-light);
+        color: var(--color-ink-mid);
+        border: 1px solid var(--color-paper-border);
+        font-family: var(--font-sans);
+    }
+    .btn-secondary:hover { background-color: var(--color-paper-hover); }
+
+    .btn-delete {
+        @apply cursor-pointer rounded border-0 px-3.5 py-1.5 text-[0.8125rem] font-medium text-white transition-colors;
+        background-color: #dc2626;
+        font-family: var(--font-sans);
+    }
+    .btn-delete:hover { background-color: #b91c1c; }
+
+    .btn-delete-small {
+        @apply cursor-pointer rounded-[0.2rem] bg-transparent px-2 py-1 text-xs transition-colors;
+        color: #dc2626;
+        border: 1px solid #fca5a5;
+        font-family: var(--font-sans);
+    }
+    .btn-delete-small:hover { background-color: #fff1f2; border-color: #dc2626; }
+
+    .toggle-btn {
+        @apply cursor-pointer whitespace-nowrap rounded px-4 py-2 text-[0.8125rem] transition-colors;
+        background-color: var(--color-paper-light);
+        color: var(--color-ink-mid);
+        border: 1px solid var(--color-paper-border);
+        font-family: var(--font-sans);
+    }
+    .toggle-btn:hover { background-color: var(--color-paper-hover); }
+
+    /* ── Forms ─────────────────────────────────────────── */
+    .admin-input {
+        @apply w-full rounded px-3 py-2 text-[0.9rem] outline-none transition-[border-color,box-shadow];
+        background-color: var(--color-paper-white);
+        color: var(--color-ink-black);
+        border: 1px solid var(--color-paper-border);
+        font-family: var(--font-sans);
+    }
+    .admin-input:focus {
+        border-color: var(--color-sovereign);
+        box-shadow: 0 0 0 3px rgba(116,0,16,0.1);
+    }
+    .admin-input.font-mono { font-family: var(--font-mono); font-size: 0.8125rem; }
+
+    .admin-label {
+        @apply mb-1.5 block text-xs font-bold uppercase tracking-[0.07em];
+        color: var(--color-ink-mid);
+    }
+
+    /* ── Surfaces ──────────────────────────────────────── */
+    .admin-card {
+        @apply mx-auto rounded bg-white;
+        max-width: 72rem;
+        border: 1px solid var(--color-paper-border);
+        box-shadow: 0 1px 4px rgba(0,0,0,0.07), 0 4px 16px rgba(0,0,0,0.05);
+        padding: 2rem 2.5rem;
+    }
+
+    .hud-stat {
+        @apply rounded;
+        background-color: var(--color-paper-white);
+        border: 1px solid var(--color-paper-border);
+        padding: 0.875rem 1rem;
+    }
+
+    /* ── Hub cards ─────────────────────────────────────── */
+    .hub-card {
+        @apply flex flex-col overflow-hidden rounded bg-white no-underline transition-[box-shadow,transform];
+        color: inherit;
+        border: 1px solid var(--color-paper-border);
+    }
+    .hub-card:hover {
+        box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+        transform: translateY(-2px);
+    }
+
+    /* ── Sidebar nav links ─────────────────────────────── */
+    .nav-link {
+        @apply block rounded-[0.2rem] px-2 py-1 text-sm leading-[1.4] no-underline transition-colors;
+        color: var(--color-ink-mid);
+    }
+    .nav-link:hover { background-color: var(--color-paper-hover); color: var(--color-sovereign); }
+    .nav-link.active {
+        background-color: var(--color-paper-hover);
+        color: var(--color-sovereign);
+        font-weight: 600;
+    }
+
+    /* ── Section headers (admin) ───────────────────────── */
+    .section-title {
+        font-family: var(--font-serif);
+        font-size: 1.45rem;
+        font-weight: 700;
+        color: var(--color-ink-black);
+    }
+
+    /* ── Article prose (injected markdown HTML) ────────── */
+    .prose-red {
+        font-family: var(--font-serif);
+        font-size: 1.175rem;
+        line-height: 1.82;
+        color: var(--color-ink-black);
+    }
+    .prose-red h1, .prose-red h2, .prose-red h3, .prose-red h4 {
+        font-family: var(--font-serif);
+        color: var(--color-ink-black);
+        margin-top: 1.75em;
+        margin-bottom: 0.5em;
+        font-weight: 700;
+    }
+    .prose-red h1 { font-size: 2.1rem; }
+    .prose-red h2 {
+        font-size: 1.6rem;
+        border-bottom: 1px solid var(--color-paper-border);
+        padding-bottom: 0.3em;
+    }
+    .prose-red h3 { font-size: 1.3rem; }
+    .prose-red h4 { font-size: 1.1rem; font-style: italic; }
+    .prose-red p  { margin-bottom: 1.25em; }
+    .prose-red a  {
+        color: var(--color-sovereign);
+        text-decoration: underline;
+        text-underline-offset: 2px;
+    }
+    .prose-red a:hover { color: var(--color-sovereign-hover); }
+    .prose-red code {
+        font-family: var(--font-mono);
+        background-color: var(--color-paper-light);
+        padding: 0.15rem 0.35rem;
+        border-radius: 0.2rem;
+        font-size: 0.875em;
+        color: var(--color-sovereign);
+        border: 1px solid var(--color-paper-border);
+    }
+    .prose-red pre {
+        background-color: var(--color-ink-black);
+        color: #e8e4e0;
+        padding: 1.25rem;
+        border-radius: 0.3rem;
+        overflow-x: auto;
+        margin: 1.5rem 0;
+        font-size: 0.9rem;
+        line-height: 1.65;
+    }
+    .prose-red pre code { background: none; color: inherit; padding: 0; border: none; font-size: inherit; }
+    .prose-red blockquote {
+        border-left: 3px solid var(--color-sovereign);
+        padding-left: 1.25rem;
+        font-style: italic;
+        color: var(--color-ink-mid);
+        margin: 1.5rem 0;
+    }
+    .prose-red ul, .prose-red ol { margin: 1.25rem 0; padding-left: 2rem; }
+    .prose-red ul { list-style: disc; }
+    .prose-red ol { list-style: decimal; }
+    .prose-red li { margin: 0.4rem 0; }
+    .prose-red table { width: 100%; border-collapse: collapse; margin: 1.5rem 0; font-size: 0.975rem; }
+    .prose-red th, .prose-red td { border: 1px solid var(--color-paper-border); padding: 0.5rem 0.75rem; text-align: left; }
+    .prose-red th {
+        background-color: var(--color-paper-light);
+        font-family: var(--font-sans);
+        font-size: 0.8125rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--color-ink-mid);
+    }
+    .prose-red img { max-width: 100%; height: auto; border-radius: 0.3rem; margin: 1.5rem 0; }
+}
+
+/* ── Peer directory / nodes page (ported from nodes.html inline styles) ── */
+@layer components {
+    .node-card {
+        display: flex;
+        flex-direction: column;
+        border-radius: 0.375rem;
+        background: #fff;
+        border: 1px solid var(--color-paper-border);
+        padding: 1.25rem 1.375rem;
+        transition: box-shadow .15s, transform .12s;
+    }
+    .node-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.10); transform: translateY(-2px); }
+
+    .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        border-radius: 0.25rem;
+        padding: 0.15rem 0.5rem;
+        font-family: var(--font-sans);
+        font-size: 0.6875rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+    }
+    .badge-online  { background: #f0fdf4; color: #166534; border: 1px solid #86efac; }
+    .badge-offline { background: #fef2f2; color: #991b1b; border: 1px solid #fca5a5; }
+    .badge-tunnel  { background: #f0ece8; color: #3a3b3b; border: 1px solid #d8d4cf; }
+    .badge-type    { background: #fbf9f8; color: #740010; border: 1px solid #e2bebc; }
+
+    .path-link {
+        display: inline-block;
+        border-radius: 0.2rem;
+        padding: 0.15rem 0.5rem;
+        font-family: var(--font-mono);
+        font-size: 0.75rem;
+        color: var(--color-ink-mid);
+        background: var(--color-paper-light);
+        border: 1px solid var(--color-paper-border);
+        text-decoration: none;
+        transition: all .12s;
+    }
+    .path-link:hover { background: var(--color-paper-hover); color: var(--color-sovereign); }
+
+    .copy-btn {
+        cursor: pointer;
+        white-space: nowrap;
+        border-radius: 0.25rem;
+        padding: 0.3rem 0.75rem;
+        font-family: var(--font-sans);
+        font-size: 0.75rem;
+        font-weight: 600;
+        background-color: var(--color-paper-light);
+        color: var(--color-ink-mid);
+        border: 1px solid var(--color-paper-border);
+        transition: background-color .12s;
+    }
+    .copy-btn:hover { background-color: var(--color-paper-hover); }
+
+    .key-chip {
+        cursor: pointer;
+        font-family: var(--font-mono);
+        font-size: 0.8125rem;
+        color: var(--color-ink-mid);
+        border-bottom: 1px dotted var(--color-ink-muted);
+        word-break: break-all;
+    }
+    .key-chip:hover { color: var(--color-sovereign); }
+
+    /* admin status message states */
+    .status-message.error   { color: #dc2626; }
+    .status-message.success { color: #15803d; }
+}

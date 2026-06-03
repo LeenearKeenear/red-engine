@@ -1,0 +1,204 @@
+<!-- nodes.html — public peer directory (/-/nodes)
+     Server-side rendered. Self-contained: inlines the Paper & Ink theme via the
+     Tailwind Play CDN so the page renders without the dist build. Lists known
+     peer nodes with cached health, tunnel-type badges, exported paths, and the
+     Ed25519 key (identity anchor). The header shows THIS node's own identity so
+     visitors know which node they are on and can register it as a peer. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ .Self.Name }} — Network Nodes</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        sovereign: { DEFAULT: '#740010', hover: '#5a000c' },
+                        ink:   { black: '#1b1c1c', mid: '#3a3b3b', muted: '#6b6c6c' },
+                        paper: { white: '#fbf9f8', light: '#f0ece8', border: '#d8d4cf', hover: '#e4e0db' },
+                    },
+                    fontFamily: {
+                        serif: ["'EB Garamond'", 'Georgia', 'serif'],
+                        sans:  ["'Public Sans'", 'system-ui', '-apple-system', 'sans-serif'],
+                        mono:  ["'JetBrains Mono'", "'Fira Code'", "'Courier New'", 'monospace'],
+                    },
+                },
+            },
+        };
+    </script>
+    <style type="text/tailwindcss">
+        @layer components {
+            .node-card { display:flex; flex-direction:column; border-radius:0.375rem; background:#fff; border:1px solid #d8d4cf; padding:1.25rem 1.375rem; transition:box-shadow .15s, transform .12s; }
+            .node-card:hover { box-shadow:0 4px 20px rgba(0,0,0,0.10); transform:translateY(-2px); }
+            .badge { display:inline-flex; align-items:center; gap:0.3rem; border-radius:0.25rem; padding:0.15rem 0.5rem; font-family:'Public Sans',sans-serif; font-size:0.6875rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; }
+            .badge-online  { background:#f0fdf4; color:#166534; border:1px solid #86efac; }
+            .badge-offline { background:#fef2f2; color:#991b1b; border:1px solid #fca5a5; }
+            .badge-tunnel  { background:#f0ece8; color:#3a3b3b; border:1px solid #d8d4cf; }
+            .badge-type    { background:#fbf9f8; color:#740010; border:1px solid #e2bebc; }
+            .path-link { display:inline-block; border-radius:0.2rem; padding:0.15rem 0.5rem; font-family:'JetBrains Mono','Courier New',monospace; font-size:0.75rem; color:#3a3b3b; background:#f0ece8; border:1px solid #d8d4cf; text-decoration:none; transition:all .12s; }
+            .path-link:hover { background:#e4e0db; color:#740010; }
+            .copy-btn { cursor:pointer; white-space:nowrap; border-radius:0.25rem; padding:0.3rem 0.75rem; font-family:'Public Sans',sans-serif; font-size:0.75rem; font-weight:600; background-color:#f0ece8; color:#3a3b3b; border:1px solid #d8d4cf; transition:background-color .12s; }
+            .copy-btn:hover { background-color:#e4e0db; }
+            .key-chip { cursor:pointer; font-family:'JetBrains Mono','Courier New',monospace; font-size:0.8125rem; color:#3a3b3b; border-bottom:1px dotted #6b6c6c; }
+            .key-chip:hover { color:#740010; }
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-paper-light px-6 py-8 font-sans text-ink-black">
+
+    <div class="mx-auto max-w-5xl">
+
+        <!-- ── This node's identity ─────────────────────────────── -->
+        <header class="mb-8 rounded-md border border-paper-border bg-white p-7 shadow-sm">
+            <div class="mb-5 flex flex-wrap items-baseline gap-3 border-b-2 border-sovereign pb-4">
+                <a href="/" class="whitespace-nowrap font-serif text-[2rem] font-bold tracking-[0.03em] text-sovereign">{{ .Self.Name }}</a>
+                <span class="rounded-[0.2rem] border border-paper-border bg-paper-light px-2 py-0.5 font-sans text-xs font-bold uppercase tracking-[0.1em] text-ink-muted">Network Nodes</span>
+            </div>
+
+            <p class="mb-5 max-w-2xl text-[0.9rem] leading-[1.55] text-ink-muted">
+                You are viewing the peer directory for this node. Identity is anchored to the
+                <strong class="text-ink-mid">Ed25519 public key</strong>, never the URL — a node may move
+                between addresses (e.g. a Cloudflare quick tunnel) while keeping the same identity.
+            </p>
+
+            <div class="grid grid-cols-1 gap-x-8 gap-y-2.5 sm:grid-cols-2">
+                {{ if .Self.PublicURL }}
+                <div class="flex flex-wrap items-baseline gap-2">
+                    <span class="min-w-[7rem] shrink-0 font-sans text-[0.7rem] font-bold uppercase tracking-[0.07em] text-ink-muted">Public URL</span>
+                    <a href="{{ .Self.PublicURL }}" class="break-all font-mono text-[0.8125rem] text-sovereign hover:text-sovereign-hover">{{ .Self.PublicURL }}</a>
+                </div>
+                {{ end }}
+                {{ if .Self.TunnelLabel }}
+                <div class="flex flex-wrap items-baseline gap-2">
+                    <span class="min-w-[7rem] shrink-0 font-sans text-[0.7rem] font-bold uppercase tracking-[0.07em] text-ink-muted">Tunnel</span>
+                    <span class="badge badge-tunnel">{{ .Self.TunnelLabel }}</span>
+                </div>
+                {{ end }}
+                {{ if .Self.PublicKey }}
+                <div class="flex flex-wrap items-baseline gap-2 sm:col-span-2">
+                    <span class="min-w-[7rem] shrink-0 font-sans text-[0.7rem] font-bold uppercase tracking-[0.07em] text-ink-muted">Public Key</span>
+                    <span class="key-chip" data-key="{{ .Self.PublicKey }}" title="Click to copy full key">{{ .Self.PublicKeyShort }}…</span>
+                    {{ if .Self.PublicURL }}
+                    <button class="copy-btn ml-1" data-copy="{{ .Self.PublicURL }}">Copy URL</button>
+                    {{ end }}
+                </div>
+                {{ end }}
+                {{ if .Self.Description }}
+                <div class="flex flex-wrap items-baseline gap-2 sm:col-span-2">
+                    <span class="min-w-[7rem] shrink-0 font-sans text-[0.7rem] font-bold uppercase tracking-[0.07em] text-ink-muted">About</span>
+                    <span class="font-serif text-[0.95rem] italic leading-[1.5] text-ink-mid">{{ .Self.Description }}</span>
+                </div>
+                {{ end }}
+            </div>
+        </header>
+
+        <!-- ── Peer directory ───────────────────────────────────── -->
+        <div class="mb-4 flex items-baseline justify-between">
+            <h2 class="font-serif text-[1.45rem] font-bold text-ink-black">Connected Nodes</h2>
+            <span class="font-sans text-sm text-ink-muted">{{ len .Peers }} known peer{{ if ne (len .Peers) 1 }}s{{ end }}</span>
+        </div>
+
+        {{ if .Peers }}
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {{ range .Peers }}
+            {{ $peer := . }}
+            <div class="node-card">
+
+                <!-- Title row -->
+                <div class="mb-2.5 flex items-start justify-between gap-3">
+                    <a href="{{ .URL }}" class="font-serif text-[1.2rem] font-bold leading-tight text-sovereign hover:text-sovereign-hover">{{ .Name }}</a>
+                    {{ if .IsOnline }}
+                    <span class="badge badge-online shrink-0">● Online</span>
+                    {{ else }}
+                    <span class="badge badge-offline shrink-0">● Offline</span>
+                    {{ end }}
+                </div>
+
+                <!-- Badge row -->
+                <div class="mb-3 flex flex-wrap items-center gap-1.5">
+                    <span class="badge badge-type">{{ .PeerType }}</span>
+                    {{ if .TunnelLabel }}<span class="badge badge-tunnel">{{ .TunnelLabel }}</span>{{ end }}
+                    <span class="font-sans text-xs text-ink-muted">· seen {{ .LastSeen }}</span>
+                </div>
+
+                {{ if .Description }}
+                <p class="mb-3 font-serif text-[0.95rem] italic leading-[1.5] text-ink-mid">{{ .Description }}</p>
+                {{ end }}
+
+                <!-- URL -->
+                <div class="mb-3 flex items-center gap-2">
+                    <a href="{{ .URL }}" class="break-all font-mono text-[0.8125rem] text-ink-mid hover:text-sovereign">{{ .URL }}</a>
+                </div>
+
+                {{ if .ExportedPaths }}
+                <div class="mb-3">
+                    <div class="mb-1.5 font-sans text-[0.65rem] font-bold uppercase tracking-[0.1em] text-ink-muted">Exported Paths</div>
+                    <div class="flex flex-wrap gap-1.5">
+                        {{ range .ExportedPaths }}
+                        <a href="{{ $peer.URL }}{{ . }}" class="path-link">{{ . }}</a>
+                        {{ end }}
+                    </div>
+                </div>
+                {{ end }}
+
+                <!-- Footer: key + copy -->
+                <div class="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-paper-border pt-3">
+                    {{ if .PublicKey }}
+                    <span class="key-chip" data-key="{{ .PublicKey }}" title="Click to copy full key">{{ .PublicKeyShort }}…</span>
+                    {{ else }}
+                    <span class="font-sans text-xs italic text-ink-muted">no public key</span>
+                    {{ end }}
+                    <button class="copy-btn" data-copy="{{ .URL }}">Copy peer URL</button>
+                </div>
+            </div>
+            {{ end }}
+        </div>
+        {{ else }}
+        <div class="rounded-md border border-dashed border-paper-border bg-white p-10 text-center">
+            <p class="font-serif text-[1.1rem] italic text-ink-muted">No peer nodes are known yet.</p>
+            <p class="mt-1.5 font-sans text-sm text-ink-muted">Add peers from the admin panel to populate this directory.</p>
+        </div>
+        {{ end }}
+
+        <footer class="mt-10 border-t border-paper-border pt-5 text-center font-sans text-xs text-ink-muted">
+            Resilient · Encrypted · Decentralized — peer status is cached from the last health check, not live-probed.
+        </footer>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="pointer-events-none fixed bottom-6 left-1/2 -translate-x-1/2 rounded-md bg-ink-black px-4 py-2 font-sans text-sm text-white opacity-0 shadow-lg transition-opacity duration-200">Copied</div>
+
+    <script>
+        const toast = document.getElementById('toast');
+        let toastTimer = null;
+        function showToast(msg) {
+            toast.textContent = msg;
+            toast.style.opacity = '1';
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => { toast.style.opacity = '0'; }, 1400);
+        }
+        function copy(text, label) {
+            navigator.clipboard.writeText(text)
+                .then(() => showToast(label))
+                .catch(() => showToast('Copy failed'));
+        }
+        document.addEventListener('click', (e) => {
+            const copyBtn = e.target.closest('[data-copy]');
+            if (copyBtn) { copy(copyBtn.getAttribute('data-copy'), 'URL copied'); return; }
+            const keyChip = e.target.closest('[data-key]');
+            if (keyChip) { copy(keyChip.getAttribute('data-key'), 'Public key copied'); }
+        });
+    </script>
+
+    <!-- Attribution required by NOTICE (AGPL-3.0 §7(b)) — do not remove. -->
+    <footer style="padding:1.25rem;text-align:center;font-family:'Public Sans',system-ui,sans-serif;font-size:0.75rem;color:var(--color-ink-muted,#6b6b6b);border-top:1px solid var(--color-paper-border,#e5e0d8)">
+        Powered by <a href="https://github.com/RED-Collective" target="_blank" rel="noopener" style="color:var(--color-sovereign,#740010);font-weight:600;text-decoration:underline">RED Collective</a>.
+    </footer>
+</body>
+</html>

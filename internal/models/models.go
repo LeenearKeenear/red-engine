@@ -11,12 +11,16 @@ type Article struct {
 	Verified          bool
 	Author            string
 	VerificationError string
+	VerificationState string // "verified","tampered","invalid_sig","untrusted","malformed","unsigned"
 }
 
 type Section struct {
 	Name     string
+	Path     string // URL path for this section (e.g. "/databases/sql")
 	Articles []*Article
 	Sub      map[string]*Section
+	HasCover bool `json:"has_cover"` // .meta/cover.jpg exists
+	HasIcon  bool `json:"has_icon"`  // .meta/icon.svg exists
 }
 
 type Contributor struct {
@@ -42,7 +46,7 @@ type Crumb struct {
 
 type PageData struct {
 	Site              string
-	NodeName          string // <-- ADD THIS LINE
+	NodeName          string
 	Nav               map[string]*Section
 	Body              template.HTML
 	Title             string
@@ -53,4 +57,10 @@ type PageData struct {
 	Author            string
 	Hash              string
 	VerificationError string
+	VerificationState string
+	Depth             int      // number of path segments
+	Section           *Section // filled for hub pages
+	PrevArticle       *Article // previous sibling in same section
+	NextArticle       *Article // next sibling in same section
+	DevMode           bool
 }

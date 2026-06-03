@@ -3,28 +3,33 @@ package router
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/RED-Collective/red-engine/internal/node"
 	"github.com/RED-Collective/red-engine/internal/registry"
 )
 
 type nodeInfoResponse struct {
-	NodeID          string   `json:"node_id"`
-	PublicKey       string   `json:"public_key"`
 	Name            string   `json:"name"`
+	PublicKey       string   `json:"public_key"`
 	SoftwareVersion string   `json:"software_version"`
 	ExportedPaths   []string `json:"exported_paths"`
-	Signature       string   `json:"signature"`
+	PublicURL       string   `json:"public_url"`
+	TunnelType      string   `json:"tunnel_type"`
+	Description     string   `json:"description"`
 }
 
 type addPeerRequest struct {
-	URL      string `json:"url"`
-	PeerType string `json:"peer_type"`
+	URL         string `json:"url"`
+	PeerType    string `json:"peer_type"`
+	ImportPeers bool   `json:"import_peers"`
 }
 
-func fetchNodeInfo(baseURL string) (*nodeInfoResponse, error) {
+// FetchNodeInfo retrieves a peer's nodeinfo.
+func FetchNodeInfo(baseURL string) (*nodeInfoResponse, error) {
 	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
 		baseURL = "https://" + baseURL
 	}
@@ -46,9 +51,6 @@ func fetchNodeInfo(baseURL string) (*nodeInfoResponse, error) {
 		return nil, fmt.Errorf("invalid nodeinfo response: %w", err)
 	}
 
-	if info.PublicKey == "" {
-		return nil, fmt.Errorf("peer did not provide a public key")
-	}
 	if info.Name == "" {
 		info.Name = "Unnamed Node"
 	}
@@ -79,7 +81,7 @@ func (h *handler) addPeer(w http.ResponseWriter, r *http.Request) {
 		req.PeerType = "upstream"
 	}
 
-	info, err := fetchNodeInfo(req.URL)
+	info, err := FetchNodeInfo(req.URL)
 	if err != nil {
 		http.Error(w, "Failed to fetch nodeinfo: "+err.Error(), http.StatusBadGateway)
 		return
@@ -90,15 +92,24 @@ func (h *handler) addPeer(w http.ResponseWriter, r *http.Request) {
 		PublicKey:     info.PublicKey,
 		Name:          info.Name,
 		PeerType:      req.PeerType,
+		Description:   info.Description,
+		PublicURL:     info.PublicURL,
+		TunnelType:    info.TunnelType,
 		ExportedPaths: info.ExportedPaths,
 		LastSeen:      time.Now(),
-		Verified:      true,
 		AddedAt:       time.Now(),
 	}
 	if err := registry.AddPeer(peer); err != nil {
 		http.Error(w, "Failed to save peer: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Optional gossip: import the peer's known peers, always as upstream only
+	// (privacy opt-in — the operator must promote them manually).
+	if req.ImportPeers {
+		go importPeerGossip(req.URL)
+	}
+
 	w.WriteHeader(http.StatusCreated)
 }
 
@@ -129,7 +140,6 @@ func (h *handler) checkPeerHealth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	// Attempt to fetch /nodeinfo
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(strings.TrimSuffix(req.URL, "/") + "/-/nodeinfo")
 	if err != nil || resp.StatusCode != http.StatusOK {
@@ -173,21 +183,21 @@ func (h *handler) refreshPeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch fresh nodeinfo from peer
-	info, err := fetchNodeInfo(req.URL)
+	info, err := FetchNodeInfo(req.URL)
 	if err != nil {
 		http.Error(w, "Failed to fetch nodeinfo: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 
-	// Update the peer in the database
 	peer := registry.Peer{
 		URL:           req.URL,
 		PublicKey:     info.PublicKey,
 		Name:          info.Name,
+		Description:   info.Description,
+		PublicURL:     info.PublicURL,
+		TunnelType:    info.TunnelType,
 		ExportedPaths: info.ExportedPaths,
 		LastSeen:      time.Now(),
-		Verified:      true, // signature already verified in fetchNodeInfo
 	}
 	if err := registry.AddPeer(peer); err != nil {
 		http.Error(w, "Failed to update peer: "+err.Error(), http.StatusInternalServerError)
@@ -196,4 +206,154 @@ func (h *handler) refreshPeer(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
+// RefreshPeer updates the peer record in the database with fresh nodeinfo.
+func RefreshPeer(peerURL string) error {
+	info, err := FetchNodeInfo(peerURL)
+	if err != nil {
+		return err
+	}
+	peer := registry.Peer{
+		URL:           peerURL,
+		PublicKey:     info.PublicKey,
+		Name:          info.Name,
+		Description:   info.Description,
+		PublicURL:     info.PublicURL,
+		TunnelType:    info.TunnelType,
+		ExportedPaths: info.ExportedPaths,
+		LastSeen:      time.Now(),
+	}
+	return registry.AddPeer(peer)
+}
+
+// peerListItem is the public JSON shape returned by GET /-/peers. It exposes
+// only what other nodes need to discover and contact this node's peers — never
+// admin-only fields. ExportedPaths is joined from peer_exported_paths.
+type peerListItem struct {
+	URL           string   `json:"url"`
+	PublicKey     string   `json:"public_key,omitempty"`
+	Name          string   `json:"name"`
+	PeerType      string   `json:"peer_type"`
+	Description   string   `json:"description,omitempty"`
+	PublicURL     string   `json:"public_url,omitempty"`
+	TunnelType    string   `json:"tunnel_type,omitempty"`
+	IsOnline      bool     `json:"is_online"`
+	ExportedPaths []string `json:"exported_paths"`
+	LastSeen      string   `json:"last_seen,omitempty"`
+}
+
+// publicPeers serves GET /-/peers — an unauthenticated JSON list of this node's
+// known peers, used for gossip discovery by other nodes. The peer URL each entry
+// advertises is its self-reported public_url when available, otherwise the URL
+// we reach it at. We never leak peers that have no contactable address.
+func (h *handler) publicPeers(w http.ResponseWriter, r *http.Request) {
+	peers, err := registry.ListPeers()
+	if err != nil {
+		http.Error(w, "Failed to list peers", http.StatusInternalServerError)
+		return
+	}
+
+	items := make([]peerListItem, 0, len(peers))
+	for _, p := range peers {
+		advertised := p.PublicURL
+		if advertised == "" {
+			advertised = p.URL
+		}
+		if advertised == "" {
+			continue
+		}
+		item := peerListItem{
+			URL:           advertised,
+			PublicKey:     p.PublicKey,
+			Name:          p.Name,
+			PeerType:      p.PeerType,
+			Description:   p.Description,
+			PublicURL:     p.PublicURL,
+			TunnelType:    p.TunnelType,
+			IsOnline:      p.IsOnline,
+			ExportedPaths: p.ExportedPaths,
+		}
+		if item.ExportedPaths == nil {
+			item.ExportedPaths = []string{}
+		}
+		if !p.LastSeen.IsZero() {
+			item.LastSeen = p.LastSeen.UTC().Format(time.RFC3339)
+		}
+		items = append(items, item)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
+}
+
+// importPeerGossip fetches a peer's /-/peers list and registers any unknown
+// nodes as upstream ONLY (privacy opt-in — the operator must manually promote
+// them to downstream/mirror). Runs in a goroutine; errors are logged, not fatal.
+func importPeerGossip(peerURL string) {
+	base := peerURL
+	if !strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "https://") {
+		base = "https://" + base
+	}
+	endpoint := strings.TrimSuffix(base, "/") + "/-/peers"
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(endpoint)
+	if err != nil {
+		log.Printf("[Gossip] fetch %s: %v", endpoint, err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[Gossip] %s returned HTTP %d", endpoint, resp.StatusCode)
+		return
+	}
+
+	var remote []peerListItem
+	if err := json.NewDecoder(resp.Body).Decode(&remote); err != nil {
+		log.Printf("[Gossip] decode %s: %v", endpoint, err)
+		return
+	}
+
+	self := registry.GetSetting("public_url")
+	selfKey := node.GetNodePublicKey()
+	imported := 0
+	for _, r := range remote {
+		if r.URL == "" || r.URL == self || r.URL == peerURL {
+			continue
+		}
+		// Skip ourselves by identity, never re-import our own node.
+		if selfKey != "" && r.PublicKey == selfKey {
+			continue
+		}
+		// Skip peers we already know (by key when present, else by URL).
+		if r.PublicKey != "" {
+			if existing, _ := registry.GetPeerByPublicKey(r.PublicKey); existing != nil {
+				continue
+			}
+		} else if existing, _ := registry.GetPeerByURL(r.URL); existing != nil {
+			continue
+		}
+
+		p := registry.Peer{
+			URL:           r.URL,
+			PublicKey:     r.PublicKey,
+			Name:          r.Name,
+			PeerType:      "upstream", // always upstream for gossip
+			Description:   r.Description,
+			PublicURL:     r.PublicURL,
+			TunnelType:    r.TunnelType,
+			ExportedPaths: r.ExportedPaths,
+			LastSeen:      time.Now(),
+			AddedAt:       time.Now(),
+		}
+		if err := registry.AddPeer(p); err != nil {
+			log.Printf("[Gossip] add %s: %v", r.URL, err)
+			continue
+		}
+		imported++
+	}
+	if imported > 0 {
+		log.Printf("[Gossip] imported %d new upstream peer(s) from %s", imported, peerURL)
+	}
 }

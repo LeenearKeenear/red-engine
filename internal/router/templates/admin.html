@@ -1,341 +1,202 @@
-<!-- templates/admin.html -->
+<!-- admin.html — Node Administration (Tailwind)
+     DEMO: loads red-admin-mock.js which shims /-/admin/* + /-/nodeinfo with
+     in-memory data so the dashboard is fully interactive offline. Any non-empty
+     token logs in. In production: drop the mock script; the JS below is the
+     real panel logic, unchanged except for Tailwind class strings. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RED Engine Admin</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <title>R.E.D. Engine — Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="red-theme.js"></script>
+    <style type="text/tailwindcss">
+        /* JS-toggled state classes (added at runtime) */
+        @layer components {
+            .status-message.error   { color:#dc2626; }
+            .status-message.success { color:#15803d; }
+            .hud-stat-value.online   { color:#15803d; }
+            .hud-stat-value.offline  { color:#dc2626; }
+        }
+    </style>
 </head>
-<body class="admin-body">
+<body class="min-h-screen bg-paper-light px-6 py-8 font-sans text-ink-black">
 
     <div class="admin-card">
-        <h1 class="admin-title">Node Administration</h1>
 
-        <!-- Login View -->
-        <div id="login-view">
-            <label class="admin-label">Admin Token</label>
-            <div class="input-group">
-                <input type="password" id="token" placeholder="Enter secure token" class="admin-input" required>
-                <button type="button" class="toggle-btn" id="togglePasswordBtn" onclick="toggleVisibility()">Show</button>
-            </div>
-            <button class="btn-primary" onclick="login()">Access Dashboard</button>
-            <div id="login-status" class="status-message"></div>
+        <!-- Brand Bar -->
+        <div class="mb-7 flex items-baseline gap-3 border-b-2 border-sovereign pb-5">
+            <span class="whitespace-nowrap font-serif text-[2rem] font-bold tracking-[0.04em] text-sovereign">R.E.D. Engine</span>
+            <span class="rounded-[0.2rem] border border-paper-border bg-paper-light px-2 py-0.5 font-sans text-xs font-bold uppercase tracking-[0.1em] text-ink-muted">Node Administration</span>
         </div>
 
-        <!-- Dashboard View -->
-        <div id="dashboard-view" style="display: none;">
-            <div class="alert success" style="text-align: center; margin-bottom: 1.5rem;">✓ Authenticated</div>
+        <!-- ── Login View ─────────────────────────────────────── -->
+        <div id="login-view">
+            <p class="mb-5 text-[0.9rem] leading-[1.5] text-ink-muted">
+                Enter your admin token to access the node dashboard.
+                <span class="text-ink-mid">(Demo: any non-empty token works.)</span>
+            </p>
+            <label class="admin-label">Admin Token</label>
+            <div class="mt-1 flex gap-2">
+                <input type="password" id="token" placeholder="Secure token" class="admin-input flex-1" required>
+                <button type="button" class="toggle-btn" id="togglePasswordBtn" onclick="toggleVisibility()">Show</button>
+            </div>
+            <button class="btn-primary mt-3" onclick="login()">Access Dashboard</button>
+            <div id="login-status" class="status-message mt-2 min-h-[1.25rem] font-sans text-[0.8125rem]"></div>
+        </div>
 
-            <!-- Node Identity Panel -->
-            <div class="admin-section">
-                <h2 class="section-title">Node Identity</h2>
-                <div id="node-info" class="form-card">
-                    <p><strong>Node Name:</strong> <span id="node-name">Loading...</span></p>
-                    <p><strong>Public Key (hex):</strong> <code id="node-pubkey" class="contributor-key">Loading...</code></p>
-                    <p><strong>Node Info Endpoint:</strong> <code id="node-endpoint"></code></p>
-                    <button id="copy-node-pubkey" class="btn-success" style="margin-top: 0.5rem;">Copy Public Key</button>
+        <!-- ── Dashboard View ────────────────────────────────── -->
+        <div id="dashboard-view" style="display:none;">
+
+            <!-- Authenticated alert -->
+            <div class="mb-8 flex items-start gap-3.5 rounded-r border-l-4 border-[#86efac] bg-[#f0fdf4] px-[1.125rem] py-3.5">
+                <div class="mt-[0.1rem] shrink-0 text-[#16a34a]">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" class="h-[1.375rem] w-[1.375rem]">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                </div>
+                <div>
+                    <h3 class="mb-0.5 font-sans text-[0.9375rem] font-bold text-[#166534]">Authenticated</h3>
+                    <p class="font-sans text-sm text-ink-mid">Session active. All changes take effect immediately.</p>
                 </div>
             </div>
 
-            <!-- Contributors Management -->
-            <div class="admin-section">
-                <h2 class="section-title">Trusted Contributors</h2>
-                <div id="contributors-list" class="contributors-list"></div>
-                <div class="form-card">
+            <!-- Status HUD -->
+            <div class="mb-5 grid grid-cols-[repeat(auto-fit,minmax(175px,1fr))] gap-3.5">
+                <div class="hud-stat">
+                    <div class="mb-[0.35rem] font-sans text-[0.65rem] font-bold uppercase tracking-[0.12em] text-ink-muted">Node Name</div>
+                    <div class="hud-stat-value break-all font-mono text-[0.9rem] font-semibold leading-[1.3] text-ink-black" id="hud-name">—</div>
+                </div>
+                <div class="hud-stat">
+                    <div class="mb-[0.35rem] font-sans text-[0.65rem] font-bold uppercase tracking-[0.12em] text-ink-muted">Software Version</div>
+                    <div class="hud-stat-value break-all font-mono text-[0.9rem] font-semibold leading-[1.3] text-ink-black" id="hud-version">—</div>
+                </div>
+                <div class="hud-stat">
+                    <div class="mb-[0.35rem] font-sans text-[0.65rem] font-bold uppercase tracking-[0.12em] text-ink-muted">Exported Paths</div>
+                    <div class="hud-stat-value break-all font-mono text-[0.9rem] font-semibold leading-[1.3] text-ink-black" id="hud-paths">—</div>
+                </div>
+                <div class="hud-stat">
+                    <div class="mb-[0.35rem] font-sans text-[0.65rem] font-bold uppercase tracking-[0.12em] text-ink-muted">Node Status</div>
+                    <div class="hud-stat-value online break-all font-mono text-[0.9rem] font-semibold leading-[1.3]" id="hud-status">Online</div>
+                </div>
+            </div>
+
+            <!-- Node Identity -->
+            <div class="border-t border-paper-border py-8">
+                <h2 class="section-title mb-1">Node Identity</h2>
+                <p class="mb-4 text-sm leading-[1.5] text-ink-muted">Details broadcast via the <code class="rounded-[0.2rem] border border-paper-border bg-paper-light px-1.5 py-0.5 font-mono text-[0.8em]">/-/nodeinfo</code> endpoint to peer nodes.</p>
+                <div id="node-info" class="mt-4 rounded-[0.3rem] border border-paper-border bg-paper-white p-5">
+                    <p class="flex flex-wrap items-baseline gap-3 border-b border-paper-border py-2 font-sans text-sm text-ink-mid"><strong class="min-w-[9rem] shrink-0 text-[0.7rem] font-bold uppercase tracking-[0.07em] text-ink-muted">Name</strong> <span id="node-name">Loading…</span></p>
+                    <p class="flex flex-wrap items-baseline gap-3 border-b border-paper-border py-2 font-sans text-sm text-ink-mid"><strong class="min-w-[9rem] shrink-0 text-[0.7rem] font-bold uppercase tracking-[0.07em] text-ink-muted">Software Version</strong> <span id="node-version">Loading…</span></p>
+                    <p class="flex flex-wrap items-baseline gap-3 border-b border-paper-border py-2 font-sans text-sm text-ink-mid"><strong class="min-w-[9rem] shrink-0 text-[0.7rem] font-bold uppercase tracking-[0.07em] text-ink-muted">Exported Paths</strong> <span id="node-paths">Loading…</span></p>
+                    <p class="flex flex-wrap items-baseline gap-3 py-2 font-sans text-sm text-ink-mid"><strong class="min-w-[9rem] shrink-0 text-[0.7rem] font-bold uppercase tracking-[0.07em] text-ink-muted">Nodeinfo Endpoint</strong> <code id="node-endpoint" class="break-all rounded-[0.2rem] border border-paper-border bg-paper-light px-1.5 py-0.5 font-mono text-[0.8125rem] text-ink-mid"></code></p>
+                </div>
+            </div>
+
+            <!-- Trusted Contributors -->
+            <div class="border-t border-paper-border py-8">
+                <h2 class="section-title mb-1">Trusted Contributors</h2>
+                <p class="mb-4 text-sm leading-[1.5] text-ink-muted">Add a writer's Ed25519 public key to authorise their signed content on this node. Files signed by a trusted key display as <strong>Verified</strong>.</p>
+                <div id="contributors-list" class="mb-4"></div>
+                <div class="mt-4 rounded-[0.3rem] border border-paper-border bg-paper-white p-5">
                     <label class="admin-label">Name</label>
-                    <input type="text" id="contributor-name" placeholder="e.g., Alice" class="admin-input">
-                    <label class="admin-label mt-3">Public Key (hex)</label>
-                    <input type="text" id="contributor-key" placeholder="64-character hex string" class="admin-input">
-                    <button class="btn-success" onclick="addContributor()">Add Contributor</button>
-                    <div id="contributor-status" class="status-message"></div>
+                    <input type="text" id="contributor-name" placeholder="e.g. Alice" class="admin-input">
+                    <label class="admin-label mt-3">Public Key <span class="font-normal normal-case tracking-normal">(64-character hex)</span></label>
+                    <input type="text" id="contributor-key" placeholder="64-character hex string" class="admin-input font-mono">
+                    <button class="btn-success mt-3" onclick="addContributor()">Add Contributor</button>
+                    <div id="contributor-status" class="status-message mt-2 min-h-[1.25rem] font-sans text-[0.8125rem]"></div>
                 </div>
             </div>
 
-            <!-- Peer Management -->
-            <div class="admin-section">
-                <h2 class="section-title">Peer Nodes</h2>
-                <div id="peers-list" class="peers-list"></div>
-                <div class="form-card">
-                    <label class="admin-label">Peer URL (e.g., https://node.example.com)</label>
-                    <input type="text" id="peer-url" placeholder="https://..." class="admin-input">
+            <!-- Peer Nodes -->
+            <div class="border-t border-paper-border py-8">
+                <h2 class="section-title mb-1">Peer Nodes</h2>
+                <p class="mb-4 text-sm leading-[1.5] text-ink-muted">Connect upstream nodes (pull content from), downstream nodes (push content to), or mirrors (bidirectional).</p>
+                <div id="peers-list" class="mb-4"></div>
+                <div class="mt-4 rounded-[0.3rem] border border-paper-border bg-paper-white p-5">
+                    <label class="admin-label">Peer URL</label>
+                    <input type="text" id="peer-url" placeholder="https://node.example.com" class="admin-input">
                     <label class="admin-label mt-3">Peer Type</label>
                     <select id="peer-type" class="admin-input">
-                        <option value="upstream">Upstream (sync from)</option>
-                        <option value="downstream">Downstream (sync to)</option>
-                        <option value="mirror">Mirror (bidirectional)</option>
+                        <option value="upstream">Upstream — pull content from this peer</option>
+                        <option value="downstream">Downstream — push content to this peer</option>
+                        <option value="mirror">Mirror — bidirectional sync</option>
                     </select>
-                    <button class="btn-success" onclick="addPeer()">Add Peer</button>
-                    <div id="peer-status" class="status-message"></div>
+                    <button class="btn-success mt-3" onclick="addPeer()">Add Peer</button>
+                    <div id="peer-status" class="status-message mt-2 min-h-[1.25rem] font-sans text-[0.8125rem]"></div>
                 </div>
             </div>
 
-            <!-- Remote Sync -->
-            <div class="admin-section">
-                <h2 class="section-title">Add Remote Base or Guide</h2>
-                <label class="admin-label">Remote File or Archive URL</label>
-                <input type="text" id="url" placeholder="https://example.com/kb.tar.gz or raw file URL" class="admin-input">
-                <label class="admin-label mt-3">Target Directory Name (Optional)</label>
-                <input type="text" id="filename" placeholder="Leave blank to auto-detect from URL" class="admin-input">
-                <div class="checkbox-group">
-                    <input type="checkbox" id="saveState" checked>
-                    <label class="checkbox-label">Save to config.json (Startup Sync)</label>
+            <!-- Import Remote Content -->
+            <div class="border-t border-paper-border py-8">
+                <h2 class="section-title mb-1">Import Remote Content</h2>
+                <p class="mb-4 text-sm leading-[1.5] text-ink-muted">Pull a Git repository, zip archive, tarball, or raw file into this node's data directory.</p>
+                <label class="admin-label">URL</label>
+                <input type="text" id="url" placeholder="https://github.com/org/repo.git" class="admin-input">
+                <label class="admin-label mt-3">Local Directory Name <span class="font-normal normal-case tracking-normal">(auto-detected if blank)</span></label>
+                <input type="text" id="filename" placeholder="Leave blank to auto-detect" class="admin-input">
+                <div class="my-3 flex items-center gap-2">
+                    <input type="checkbox" id="saveState" checked class="accent-sovereign">
+                    <label class="text-sm text-ink-mid" for="saveState">Save to startup database — re-sync on every boot</label>
                 </div>
-                <button class="btn-primary" onclick="syncGuide()">Import & Sync</button>
-                <div id="status" class="status-message"></div>
+                <button class="btn-primary" onclick="syncGuide()">Import &amp; Sync</button>
+                <div id="status" class="status-message mt-2 min-h-[1.25rem] font-sans text-[0.8125rem]"></div>
             </div>
 
-            <!-- Synced Targets -->
-            <div class="admin-section">
-                <h2 class="section-title">Currently Synced Sync Targets</h2>
-                <ul id="sync-list" class="sync-list"></ul>
+            <!-- Startup Sync Sources -->
+            <div class="border-t border-paper-border py-8">
+                <h2 class="section-title mb-1">Startup Sync Sources</h2>
+                <p class="mb-4 text-sm leading-[1.5] text-ink-muted">These sources are re-synced automatically each time the node boots.</p>
+                <ul id="sync-list" class="flex list-none flex-col gap-2.5"></ul>
             </div>
+
         </div>
     </div>
 
+    <script src="red-admin-mock.js"></script>
     <script>
-        let sessionToken = "";
-
-        function toggleVisibility() {
-            const input = document.getElementById("token");
-            const btn = document.getElementById("togglePasswordBtn");
-            if (input.type === "password") {
-                input.type = "text";
-                btn.textContent = "Hide";
-            } else {
-                input.type = "password";
-                btn.textContent = "Show";
-            }
-        }
-
-        async function login() {
-            const tokenInput = document.getElementById("token").value;
-            const statusDiv = document.getElementById("login-status");
-            statusDiv.textContent = "Verifying...";
-            statusDiv.className = "status-message";
-            try {
-                const response = await fetch("/-/admin/config", {
-                    headers: { "X-Admin-Token": tokenInput },
-                });
-                if (response.ok) {
-                    sessionToken = tokenInput;
-                    document.getElementById("login-view").style.display = "none";
-                    document.getElementById("dashboard-view").style.display = "block";
-                    const data = await response.json();
-                    renderList(data);
-                    loadContributors();
-                    loadNodeInfo();
-                    loadPeers();
-                    document.getElementById('copy-node-pubkey').onclick = copyNodePubkey;
-                } else {
-                    statusDiv.textContent = "Error: Invalid Admin Token!";
-                    statusDiv.classList.add("error");
-                }
-            } catch (err) {
-                statusDiv.textContent = "Server communication failure. Check terminal logs.";
-                statusDiv.classList.add("error");
-            }
-        }
-
-        function renderList(syncArray) {
-            const list = document.getElementById("sync-list");
-            list.innerHTML = "";
-            if (!syncArray || syncArray.length === 0) {
-                list.innerHTML = '<li class="empty-message">No startup sync hooks configured.</li>';
-                return;
-            }
-            syncArray.forEach((item) => {
-                const li = document.createElement("li");
-                li.className = "sync-item";
-                const escapedFilename = btoa(item.filename);
-                li.innerHTML = `
-                    <div class="sync-info">
-                        <strong>${escapeHtml(item.filename)}</strong>
-                        <span>${escapeHtml(item.url)}</span>
-                        <label class="checkbox-label-small">
-                            <input type="checkbox" id="delete-files-${escapedFilename}" checked> Delete local files on remove
-                        </label>
-                    </div>
-                    <button class="btn-delete" onclick="removeGuide('${escapeHtml(item.filename)}', '${escapedFilename}')">Remove</button>
-                `;
-                list.appendChild(li);
-            });
-        }
-
-        async function syncGuide() {
-            const statusDiv = document.getElementById("status");
-            const payload = {
-                url: document.getElementById("url").value,
-                filename: document.getElementById("filename").value,
-                saveToStartup: document.getElementById("saveState").checked,
-            };
-            statusDiv.textContent = "Syncing...";
-            statusDiv.className = "status-message";
-            try {
-                const response = await fetch("/-/import", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-Admin-Token": sessionToken,
-                    },
-                    body: JSON.stringify(payload),
-                });
-                const text = await response.text();
-                if (response.ok) {
-                    statusDiv.textContent = text;
-                    statusDiv.classList.add("success");
-                    document.getElementById("url").value = "";
-                    document.getElementById("filename").value = "";
-                    refreshList();
-                } else {
-                    statusDiv.textContent = "Error: " + text;
-                    statusDiv.classList.add("error");
-                }
-            } catch (err) {
-                statusDiv.textContent = "Network error syncing target.";
-                statusDiv.classList.add("error");
-            }
-        }
-
-        async function removeGuide(filename, escapedFilename) {
-            const deleteCheckbox = document.getElementById(`delete-files-${escapedFilename}`);
-            const deleteLocal = deleteCheckbox ? deleteCheckbox.checked : false;
-            let msg = `Are you sure you want to stop tracking "${filename}"?`;
-            if (deleteLocal) msg += " This will permanently delete its files from system storage!";
-            if (!confirm(msg)) return;
-            try {
-                const response = await fetch("/-/admin/remove", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-Admin-Token": sessionToken,
-                    },
-                    body: JSON.stringify({ filename, deleteLocalFiles: deleteLocal }),
-                });
-                if (response.ok) {
-                    refreshList();
-                } else {
-                    alert("Prune operation failed: " + (await response.text()));
-                }
-            } catch (err) {
-                alert("Network communication fault.");
-            }
-        }
-
-        async function refreshList() {
-            const response = await fetch("/-/admin/config", {
-                headers: { "X-Admin-Token": sessionToken },
-            });
-            if (response.ok) {
-                const data = await response.json();
-                renderList(data);
-            }
-        }
-
-        async function loadContributors() {
-            const response = await fetch('/-/admin/contributors', {
-                headers: { 'X-Admin-Token': sessionToken }
-            });
-            if (response.ok) {
-                const contributors = await response.json();
-                renderContributors(contributors);
-            } else {
-                console.error('Failed to load contributors');
-            }
-        }
-
-        function renderContributors(contributors) {
-            const container = document.getElementById('contributors-list');
-            if (!contributors.length) {
-                container.innerHTML = '<p class="empty-message">No trusted contributors configured.</p>';
-                return;
-            }
-            const ul = document.createElement('ul');
-            ul.className = 'contributor-list';
-            contributors.forEach(c => {
-                const li = document.createElement('li');
-                li.className = 'contributor-item';
-                li.innerHTML = `
-                    <div>
-                        <strong>${escapeHtml(c.name)}</strong><br>
-                        <code class="contributor-key">${escapeHtml(c.public_key)}</code>
-                    </div>
-                    <button class="btn-delete-small" onclick="deleteContributor('${escapeHtml(c.public_key)}')">Delete</button>
-                `;
-                ul.appendChild(li);
-            });
-            container.innerHTML = '';
-            container.appendChild(ul);
-        }
-
-        async function addContributor() {
-            const name = document.getElementById('contributor-name').value.trim();
-            const pubkey = document.getElementById('contributor-key').value.trim();
-            const statusDiv = document.getElementById('contributor-status');
-            if (!name || !pubkey) {
-                statusDiv.textContent = 'Name and public key are required.';
-                statusDiv.className = 'status-message error';
-                return;
-            }
-            if (pubkey.length !== 64 || !/^[0-9a-fA-F]+$/.test(pubkey)) {
-                statusDiv.textContent = 'Public key must be a 64-character hex string.';
-                statusDiv.className = 'status-message error';
-                return;
-            }
-            statusDiv.textContent = 'Adding...';
-            statusDiv.className = 'status-message';
-            try {
-                const response = await fetch('/-/admin/contributors/add', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Admin-Token': sessionToken
-                    },
-                    body: JSON.stringify({ name, public_key: pubkey })
-                });
-                if (response.ok) {
-                    statusDiv.textContent = 'Contributor added successfully.';
-                    statusDiv.classList.add('success');
-                    document.getElementById('contributor-name').value = '';
-                    document.getElementById('contributor-key').value = '';
-                    loadContributors();
-                } else {
-                    const text = await response.text();
-                    statusDiv.textContent = `Error: ${text}`;
-                    statusDiv.classList.add('error');
-                }
-            } catch (err) {
-                statusDiv.textContent = 'Network error.';
-                statusDiv.classList.add('error');
-            }
-        }
-
-        async function deleteContributor(publicKey) {
-            if (!confirm('Remove this trusted contributor? Existing signatures from this key will become unverified.')) return;
-            const response = await fetch('/-/admin/contributors/delete', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Admin-Token': sessionToken
-                },
-                body: JSON.stringify({ public_key: publicKey })
-            });
-            if (response.ok) {
-                loadContributors();
-            } else {
-                const text = await response.text();
-                alert('Failed to delete: ' + text);
-            }
-        }
+        let sessionToken = '';
 
         function escapeHtml(str) {
             if (str == null) return '';
-            return str.replace(/[&<>]/g, function(m) {
-                if (m === '&') return '&amp;';
-                if (m === '<') return '&lt;';
-                if (m === '>') return '&gt;';
-                return m;
-            });
+            return str.replace(/[&<>"']/g, m =>
+                ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+        }
+
+        function toggleVisibility() {
+            const input = document.getElementById('token');
+            const btn   = document.getElementById('togglePasswordBtn');
+            input.type  = input.type === 'password' ? 'text' : 'password';
+            btn.textContent = input.type === 'password' ? 'Show' : 'Hide';
+        }
+
+        async function login() {
+            const tokenInput = document.getElementById('token').value;
+            const statusDiv  = document.getElementById('login-status');
+            statusDiv.textContent = 'Verifying…';
+            statusDiv.className   = 'status-message mt-2 min-h-[1.25rem] font-sans text-[0.8125rem]';
+            try {
+                const response = await fetch('/-/admin/config', { headers: { 'X-Admin-Token': tokenInput } });
+                if (response.ok) {
+                    sessionToken = tokenInput;
+                    document.getElementById('login-view').style.display    = 'none';
+                    document.getElementById('dashboard-view').style.display = 'block';
+                    renderSyncList(await response.json());
+                    loadNodeInfo();
+                    loadContributors();
+                    loadPeers();
+                } else {
+                    statusDiv.textContent = 'Invalid admin token.';
+                    statusDiv.classList.add('error');
+                }
+            } catch (err) {
+                statusDiv.textContent = 'Server unreachable. Check terminal logs.';
+                statusDiv.classList.add('error');
+            }
         }
 
         async function loadNodeInfo() {
@@ -343,222 +204,306 @@
                 const response = await fetch('/-/nodeinfo');
                 if (response.ok) {
                     const info = await response.json();
-                    document.getElementById('node-name').textContent = info.name || 'Unnamed Node';
-                    document.getElementById('node-pubkey').textContent = info.public_key || 'N/A';
+                    const name    = info.name             || 'Unnamed Node';
+                    const version = info.software_version || 'unknown';
+                    const paths   = (info.exported_paths  || []).join(', ') || 'none';
+                    document.getElementById('node-name').textContent     = name;
+                    document.getElementById('node-version').textContent  = version;
+                    document.getElementById('node-paths').textContent    = paths;
                     document.getElementById('node-endpoint').textContent = window.location.origin + '/-/nodeinfo';
+                    document.getElementById('hud-name').textContent    = name;
+                    document.getElementById('hud-version').textContent = version;
+                    document.getElementById('hud-paths').textContent   = paths;
                 } else {
-                    document.getElementById('node-name').textContent = 'Failed to load';
-                    document.getElementById('node-pubkey').textContent = 'Error';
+                    document.getElementById('node-name').textContent  = 'Failed to load';
+                    document.getElementById('hud-status').textContent = 'Error';
+                    document.getElementById('hud-status').className    = 'hud-stat-value offline break-all font-mono text-[0.9rem] font-semibold leading-[1.3]';
                 }
             } catch (err) {
-                console.error('Failed to fetch node info', err);
-                document.getElementById('node-name').textContent = 'Error loading';
+                document.getElementById('node-name').textContent  = 'Unreachable';
+                document.getElementById('hud-status').textContent = 'Unreachable';
+                document.getElementById('hud-status').className    = 'hud-stat-value offline break-all font-mono text-[0.9rem] font-semibold leading-[1.3]';
             }
         }
 
-        function copyNodePubkey() {
-            const pubkey = document.getElementById('node-pubkey').textContent;
-            if (pubkey && pubkey !== 'Loading...') {
-                navigator.clipboard.writeText(pubkey).then(() => {
-                    alert('Public key copied to clipboard!');
-                }).catch(() => {
-                    alert('Failed to copy');
-                });
-            }
+        async function loadContributors() {
+            const response = await fetch('/-/admin/contributors', { headers: { 'X-Admin-Token': sessionToken } });
+            if (response.ok) renderContributors(await response.json());
         }
 
-        // ---------- Peer health check via backend proxy to avoid CORS ----------
-        async function checkPeerHealth(peerUrl) {
-            try {
-                const response = await fetch(`/-/admin/peers/health?url=${encodeURIComponent(peerUrl)}`, {
-                    headers: { 'X-Admin-Token': sessionToken }
-                });
-                if (response.ok) {
-                    const data = await response.json();
-                    return data.status;
-                }
-                return 'down';
-            } catch (err) {
-                console.error('Health check error:', err);
-                return 'down';
-            }
-        }
-
-        // ---------- Sync all exported paths of a peer ----------
-        async function syncAllExportedPaths(peerUrl, exportedPaths) {
-            if (!exportedPaths || exportedPaths.length === 0) {
-                alert('No exported paths to sync for this peer.');
-                return;
-            }
-            if (!confirm(`Sync all ${exportedPaths.length} paths from ${peerUrl}?`)) return;
-            let successCount = 0;
-            let failCount = 0;
-            for (const path of exportedPaths) {
-                const cleanPath = path.replace(/^\//, '').replace(/\/$/, '');
-                const localName = cleanPath.replace(/\//g, '-');
-                const payload = {
-                    peer_url: peerUrl,
-                    remote_path: '/' + cleanPath,
-                    filename: localName,
-                    saveToStartup: false
-                };
-                try {
-                    const response = await fetch('/-/import', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-Admin-Token': sessionToken
-                        },
-                        body: JSON.stringify(payload)
-                    });
-                    if (response.ok) {
-                        console.log(`Synced ${path} -> ${localName}`);
-                        successCount++;
-                    } else {
-                        const errText = await response.text();
-                        console.error(`Failed to sync ${path}: ${errText}`);
-                        failCount++;
-                    }
-                } catch (err) {
-                    console.error(`Network error syncing ${path}:`, err);
-                    failCount++;
-                }
-            }
-            alert(`Sync finished: ${successCount} succeeded, ${failCount} failed. Check console for details.`);
-            refreshList();
-        }
-
-        // ---------- Render peers with health and sync button ----------
-        async function loadPeers() {
-            const response = await fetch('/-/admin/peers', {
-                headers: { 'X-Admin-Token': sessionToken }
-            });
-            if (response.ok) {
-                const peers = await response.json();
-                renderPeers(peers);
-            } else {
-                console.error('Failed to load peers');
-            }
-        }
-
-        function renderPeers(peers) {
-            const container = document.getElementById('peers-list');
-            if (!peers.length) {
-                container.innerHTML = '<p class="empty-message">No peer nodes configured.</p>';
+        function renderContributors(contributors) {
+            const container = document.getElementById('contributors-list');
+            if (!contributors || contributors.length === 0) {
+                container.innerHTML = '<p class="px-5 py-5 text-center text-sm italic text-ink-muted">No trusted contributors yet.</p>';
                 return;
             }
             const ul = document.createElement('ul');
-            ul.className = 'peer-list';
-            for (const p of peers) {
+            ul.className = 'list-none overflow-hidden rounded-[0.3rem] border border-paper-border';
+            for (const c of contributors) {
                 const li = document.createElement('li');
-                li.className = 'peer-item';
-                const peerUrl = p.URL;
-                const peerName = p.Name || peerUrl;
-                const exportedPaths = p.ExportedPaths || [];
+                li.className = 'flex items-center justify-between gap-4 border-b border-paper-border px-4 py-3 last:border-b-0 even:bg-paper-light';
                 li.innerHTML = `
-                    <div>
-                        <strong>${escapeHtml(peerName)}</strong><br>
-                        <code>${escapeHtml(peerUrl)}</code><br>
-                        <span class="badge ${p.Verified ? 'verified' : 'unverified'}">${p.Verified ? '✓ Verified' : '⚠ Unverified'}</span>
-                        <span class="peer-type">Type: ${escapeHtml(p.PeerType)}</span>
-                        <div>Exported paths: ${exportedPaths.map(ep => escapeHtml(ep)).join(', ') || 'none'}</div>
-                        <div class="peer-health-status">Health: <span class="health-badge" data-peer-url="${escapeHtml(peerUrl)}">Checking...</span></div>
+                    <div class="min-w-0 flex-1">
+                        <strong class="block text-[0.9rem] text-ink-black">${escapeHtml(c.name)}</strong>
+                        <code class="mt-1 block break-all rounded-[0.2rem] border border-paper-border bg-paper-light px-1.5 py-0.5 font-mono text-xs text-ink-muted">${escapeHtml(c.public_key)}</code>
                     </div>
-                    <div style="margin-top: 0.5rem;">
-                        <button class="btn-success" style="margin-right: 0.5rem;" data-sync-url="${escapeHtml(peerUrl)}" data-exported-paths='${JSON.stringify(exportedPaths)}'>Sync All</button>
-                        <button class="btn-delete-small" data-delete-url="${escapeHtml(peerUrl)}">Delete</button>
-                    </div>
-                `;
+                    <button class="btn-delete-small" onclick="deleteContributor('${escapeHtml(c.public_key)}')">Revoke</button>`;
                 ul.appendChild(li);
             }
             container.innerHTML = '';
             container.appendChild(ul);
+        }
 
-            const peerItems = container.querySelectorAll('.peer-item');
-            peerItems.forEach(item => {
-                const syncBtn = item.querySelector('.btn-success');
-                const deleteBtn = item.querySelector('.btn-delete-small');
-                const healthSpan = item.querySelector('.health-badge');
-                const peerUrl = syncBtn.getAttribute('data-sync-url');
-                const exportedPaths = JSON.parse(syncBtn.getAttribute('data-exported-paths'));
+        async function addContributor() {
+            const name   = document.getElementById('contributor-name').value.trim();
+            const pubkey = document.getElementById('contributor-key').value.trim();
+            const status = document.getElementById('contributor-status');
+            const baseCls = 'status-message mt-2 min-h-[1.25rem] font-sans text-[0.8125rem]';
+            if (!name || !pubkey) {
+                status.textContent = 'Both name and public key are required.';
+                status.className   = baseCls + ' error';
+                return;
+            }
+            if (pubkey.length !== 64 || !/^[0-9a-fA-F]+$/.test(pubkey)) {
+                status.textContent = 'Public key must be exactly 64 hex characters.';
+                status.className   = baseCls + ' error';
+                return;
+            }
+            status.textContent = 'Adding…';
+            status.className   = baseCls;
+            try {
+                const resp = await fetch('/-/admin/contributors/add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Token': sessionToken },
+                    body: JSON.stringify({ name, public_key: pubkey })
+                });
+                if (resp.ok) {
+                    status.textContent = 'Contributor added. Content signed by this key will now be verified.';
+                    status.className   = baseCls + ' success';
+                    document.getElementById('contributor-name').value = '';
+                    document.getElementById('contributor-key').value  = '';
+                    loadContributors();
+                } else {
+                    status.textContent = 'Error: ' + await resp.text();
+                    status.className   = baseCls + ' error';
+                }
+            } catch (err) {
+                status.textContent = 'Network error.';
+                status.className   = baseCls + ' error';
+            }
+        }
 
-                syncBtn.onclick = () => syncAllExportedPaths(peerUrl, exportedPaths);
-                deleteBtn.onclick = () => deletePeer(peerUrl);
-                (async () => {
-                    const health = await checkPeerHealth(peerUrl);
-                    if (healthSpan) {
-                        healthSpan.textContent = health === 'up' ? '🟢 Up' : '🔴 Down';
-                        healthSpan.style.color = health === 'up' ? 'green' : 'red';
-                    }
-                })();
+        async function deleteContributor(publicKey) {
+            if (!confirm('Revoke this contributor? Files signed by this key will show as Untrusted until the key is re-added.')) return;
+            const resp = await fetch('/-/admin/contributors/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Admin-Token': sessionToken },
+                body: JSON.stringify({ public_key: publicKey })
             });
+            if (resp.ok) loadContributors();
+            else alert('Failed to revoke: ' + await resp.text());
+        }
+
+        async function loadPeers() {
+            const resp = await fetch('/-/admin/peers', { headers: { 'X-Admin-Token': sessionToken } });
+            if (resp.ok) renderPeers(await resp.json());
+        }
+
+        function renderPeers(peers) {
+            const container = document.getElementById('peers-list');
+            if (!peers || peers.length === 0) {
+                container.innerHTML = '<p class="px-5 py-5 text-center text-sm italic text-ink-muted">No peer nodes configured.</p>';
+                return;
+            }
+            const ul = document.createElement('ul');
+            ul.className = 'flex list-none flex-col gap-2.5';
+            for (const p of peers) {
+                const li = document.createElement('li');
+                li.className = 'flex items-start justify-between gap-4 rounded-[0.3rem] border border-paper-border bg-paper-white px-4 py-3.5';
+                const exportedPaths = p.exported_paths || [];
+                li.innerHTML = `
+                    <div class="min-w-0 flex-1">
+                        <strong class="block text-[0.9375rem] text-ink-black">${escapeHtml(p.name || p.url)}</strong>
+                        <code class="mt-1 block break-all font-mono text-xs text-ink-muted">${escapeHtml(p.url)}</code>
+                        <span class="mr-1.5 mt-1.5 inline-block rounded-[0.2rem] border border-paper-border bg-paper-light px-[0.45rem] py-[0.15rem] font-sans text-[0.65rem] font-bold uppercase tracking-[0.07em] text-sovereign">${escapeHtml(p.peer_type || 'upstream')}</span>
+                        <span class="font-mono text-xs text-ink-muted">${exportedPaths.map(ep => escapeHtml(ep)).join(', ') || 'no exported paths'}</span>
+                        <div class="mt-1.5 font-sans text-[0.8125rem] text-ink-muted">Health: <span class="health-badge font-bold">Checking…</span></div>
+                    </div>
+                    <div class="flex shrink-0 flex-col gap-1.5">
+                        <button class="btn-success sync-btn">Sync All</button>
+                        <button class="btn-secondary refresh-btn">Refresh</button>
+                        <button class="btn-delete-small delete-btn">Remove</button>
+                    </div>`;
+                const healthSpan = li.querySelector('.health-badge');
+                li.querySelector('.sync-btn').onclick    = () => syncAllExportedPaths(p.url, exportedPaths);
+                li.querySelector('.refresh-btn').onclick = () => refreshPeer(p.url);
+                li.querySelector('.delete-btn').onclick  = () => deletePeer(p.url);
+                checkPeerHealth(p.url).then(status => {
+                    if (healthSpan) healthSpan.textContent = status === 'up' ? '🟢 Online' : '🔴 Offline';
+                });
+                ul.appendChild(li);
+            }
+            container.innerHTML = '';
+            container.appendChild(ul);
+        }
+
+        async function checkPeerHealth(peerUrl) {
+            try {
+                const resp = await fetch('/-/admin/peers/health?url=' + encodeURIComponent(peerUrl), {
+                    headers: { 'X-Admin-Token': sessionToken }
+                });
+                if (resp.ok) return (await resp.json()).status;
+            } catch (_) {}
+            return 'down';
         }
 
         async function addPeer() {
-            const url = document.getElementById('peer-url').value.trim();
+            const url      = document.getElementById('peer-url').value.trim();
             const peerType = document.getElementById('peer-type').value;
-            const statusDiv = document.getElementById('peer-status');
+            const status   = document.getElementById('peer-status');
+            const baseCls  = 'status-message mt-2 min-h-[1.25rem] font-sans text-[0.8125rem]';
             if (!url) {
-                statusDiv.textContent = 'URL is required.';
-                statusDiv.className = 'status-message error';
+                status.textContent = 'URL is required.';
+                status.className   = baseCls + ' error';
                 return;
             }
-            statusDiv.textContent = 'Adding peer...';
-            statusDiv.className = 'status-message';
+            status.textContent = 'Connecting to peer…';
+            status.className   = baseCls;
             try {
-                const response = await fetch('/-/admin/peers/add', {
+                const resp = await fetch('/-/admin/peers/add', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Admin-Token': sessionToken
-                    },
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Token': sessionToken },
                     body: JSON.stringify({ url, peer_type: peerType })
                 });
-                if (response.ok) {
-                    statusDiv.textContent = 'Peer added successfully.';
-                    statusDiv.classList.add('success');
+                if (resp.ok) {
+                    status.textContent = 'Peer added.';
+                    status.className   = baseCls + ' success';
                     document.getElementById('peer-url').value = '';
                     await loadPeers();
-
-                    const peersResp = await fetch('/-/admin/peers', {
-                        headers: { 'X-Admin-Token': sessionToken }
-                    });
-                    if (peersResp.ok) {
-                        const peers = await peersResp.json();
-                        const newPeer = peers.find(p => p.URL === url);
-                        if (newPeer && newPeer.ExportedPaths && newPeer.ExportedPaths.length) {
-                            if (confirm(`Peer ${newPeer.Name || url} has exported paths. Sync them now?`)) {
-                                await syncAllExportedPaths(url, newPeer.ExportedPaths);
-                            }
-                        }
-                    }
                 } else {
-                    const text = await response.text();
-                    statusDiv.textContent = `Error: ${text}`;
-                    statusDiv.classList.add('error');
+                    status.textContent = 'Error: ' + await resp.text();
+                    status.className   = baseCls + ' error';
                 }
             } catch (err) {
-                statusDiv.textContent = 'Network error.';
-                statusDiv.classList.add('error');
+                status.textContent = 'Network error connecting to peer.';
+                status.className   = baseCls + ' error';
             }
+        }
+
+        async function refreshPeer(url) {
+            const resp = await fetch('/-/admin/peers/refresh', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Admin-Token': sessionToken },
+                body: JSON.stringify({ url })
+            });
+            if (resp.ok) loadPeers();
+            else alert('Failed to refresh: ' + await resp.text());
         }
 
         async function deletePeer(url) {
             if (!confirm(`Remove peer ${url}?`)) return;
-            const response = await fetch('/-/admin/peers/delete', {
+            const resp = await fetch('/-/admin/peers/delete', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Admin-Token': sessionToken
-                },
+                headers: { 'Content-Type': 'application/json', 'X-Admin-Token': sessionToken },
                 body: JSON.stringify({ url })
             });
-            if (response.ok) {
-                loadPeers();
-            } else {
-                alert('Failed to delete peer');
+            if (resp.ok) loadPeers();
+            else alert('Failed to delete: ' + await resp.text());
+        }
+
+        async function syncAllExportedPaths(peerUrl, exportedPaths) {
+            if (!exportedPaths || exportedPaths.length === 0) { alert('No exported paths to sync.'); return; }
+            for (const remotePath of exportedPaths) {
+                const folderName = remotePath.replace(/^\//, '');
+                const resp = await fetch('/-/import', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Token': sessionToken },
+                    body: JSON.stringify({ peer_url: peerUrl, remote_path: remotePath, filename: folderName, saveToStartup: false })
+                });
+                if (!resp.ok) { alert('Failed to sync ' + remotePath + ': ' + await resp.text()); return; }
+            }
+            alert('All paths synced from ' + peerUrl);
+        }
+
+        function renderSyncList(items) {
+            const list = document.getElementById('sync-list');
+            list.innerHTML = '';
+            if (!items || items.length === 0) {
+                list.innerHTML = '<li class="px-5 py-5 text-center text-sm italic text-ink-muted">No startup sync sources configured.</li>';
+                return;
+            }
+            for (const item of items) {
+                const li  = document.createElement('li');
+                li.className = 'flex items-start justify-between gap-4 rounded-[0.3rem] border border-paper-border bg-paper-white px-4 py-3.5';
+                const key = btoa(item.filename);
+                li.innerHTML = `
+                    <div class="min-w-0 flex-1">
+                        <strong class="block text-[0.9rem] font-semibold text-ink-black">${escapeHtml(item.filename)}</strong>
+                        <span class="mt-1 block break-all font-mono text-xs text-ink-muted">${escapeHtml(item.url)}</span>
+                        <label class="mt-2 inline-flex items-center gap-1 font-sans text-xs text-ink-muted">
+                            <input type="checkbox" id="del-${key}" checked class="accent-sovereign"> Delete local files on remove
+                        </label>
+                    </div>
+                    <button class="btn-delete" onclick="removeGuide('${escapeHtml(item.filename)}','${key}')">Remove</button>`;
+                list.appendChild(li);
             }
         }
+
+        async function syncGuide() {
+            const status  = document.getElementById('status');
+            const baseCls = 'status-message mt-2 min-h-[1.25rem] font-sans text-[0.8125rem]';
+            const payload = {
+                url:           document.getElementById('url').value,
+                filename:      document.getElementById('filename').value,
+                saveToStartup: document.getElementById('saveState').checked
+            };
+            status.textContent = 'Syncing…';
+            status.className   = baseCls;
+            try {
+                const resp = await fetch('/-/import', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Token': sessionToken },
+                    body: JSON.stringify(payload)
+                });
+                const text = await resp.text();
+                if (resp.ok) {
+                    status.textContent = text;
+                    status.className   = baseCls + ' success';
+                    document.getElementById('url').value      = '';
+                    document.getElementById('filename').value = '';
+                    refreshSyncList();
+                } else {
+                    status.textContent = 'Error: ' + text;
+                    status.className   = baseCls + ' error';
+                }
+            } catch (err) {
+                status.textContent = 'Network error.';
+                status.className   = baseCls + ' error';
+            }
+        }
+
+        async function removeGuide(filename, key) {
+            const deleteLocal = document.getElementById('del-' + key)?.checked ?? false;
+            const msg = `Stop tracking "${filename}"?` + (deleteLocal ? ' Local files will be permanently deleted.' : '');
+            if (!confirm(msg)) return;
+            const resp = await fetch('/-/admin/remove', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Admin-Token': sessionToken },
+                body: JSON.stringify({ filename, deleteLocalFiles: deleteLocal })
+            });
+            if (resp.ok) refreshSyncList();
+            else alert('Remove failed: ' + await resp.text());
+        }
+
+        async function refreshSyncList() {
+            const resp = await fetch('/-/admin/config', { headers: { 'X-Admin-Token': sessionToken } });
+            if (resp.ok) renderSyncList(await resp.json());
+        }
     </script>
+
+    <!-- Attribution required by NOTICE (AGPL-3.0 §7(b)) — do not remove. -->
+    <footer style="padding:1.25rem;text-align:center;font-family:'Public Sans',system-ui,sans-serif;font-size:0.75rem;color:var(--color-ink-muted,#6b6b6b);border-top:1px solid var(--color-paper-border,#e5e0d8)">
+        Powered by <a href="https://github.com/RED-Collective" target="_blank" rel="noopener" style="color:var(--color-sovereign,#740010);font-weight:600;text-decoration:underline">RED Collective</a>.
+    </footer>
 </body>
 </html>

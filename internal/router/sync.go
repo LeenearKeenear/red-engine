@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RED-Collective/red-engine/internal/config"
 	"github.com/RED-Collective/red-engine/internal/fetch"
+	"github.com/RED-Collective/red-engine/internal/registry"
 )
 
 func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
@@ -21,7 +21,6 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ---- Decode request first ----
 	var req struct {
 		URL           string `json:"url"`
 		Filename      string `json:"filename"`
@@ -34,7 +33,7 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ---- Peer‑based sync ----
+	// ---- Peer-based sync ----
 	if req.PeerURL != "" && req.RemotePath != "" {
 		destDir := filepath.Join(h.store.DataDir(), req.Filename)
 		if err := h.pullFromPeer(req.PeerURL, req.RemotePath, destDir); err != nil {
@@ -46,14 +45,8 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.SaveToStartup {
-			h.cfg.Mu.Lock()
-			h.cfg.StartupSync = append(h.cfg.StartupSync, config.RemoteSync{
-				URL:      req.PeerURL + req.RemotePath,
-				Filename: req.Filename,
-			})
-			h.cfg.Mu.Unlock()
-			if err := h.cfg.Save(h.cfgPath); err != nil {
-				http.Error(w, "Saved content but failed to update config: "+err.Error(), http.StatusInternalServerError)
+			if err := registry.AddStartupSync(req.PeerURL+req.RemotePath, req.Filename); err != nil {
+				http.Error(w, "Saved content but failed to update database: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
 		}
@@ -62,13 +55,13 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ---- Normal URL‑based import (unchanged) ----
+	// ---- Normal URL-based import ----
 	if req.URL == "" {
 		http.Error(w, "URL required", http.StatusBadRequest)
 		return
 	}
 
-	// 1. SSRF Protection & URL Parsing
+	// SSRF protection
 	parsedURL, err := url.Parse(req.URL)
 	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
 		http.Error(w, "Invalid URL scheme", http.StatusBadRequest)
@@ -88,7 +81,7 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// --- SMART GITHUB URL REWRITER ---
+	// GitHub URL rewriter
 	if parsedURL.Host == "github.com" {
 		pathParts := strings.Split(strings.Trim(parsedURL.Path, "/"), "/")
 		if len(pathParts) == 2 {
@@ -101,7 +94,7 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 2. Directory & Path Sanitization & Auto-Naming
+	// Path sanitization and auto-naming
 	targetSubPath := filepath.Clean(req.Filename)
 	if targetSubPath == "." || targetSubPath == "" {
 		pathParts := strings.Split(strings.TrimRight(parsedURL.Path, "/"), "/")
@@ -143,7 +136,6 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		// raw file
 		if err := os.MkdirAll(filepath.Dir(destinationDir), 0755); err != nil {
 			http.Error(w, "Failed to create directory structure", http.StatusInternalServerError)
 			return
@@ -187,21 +179,8 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.SaveToStartup {
-		h.cfg.Mu.Lock()
-		var newSync []config.RemoteSync
-		for _, sync := range h.cfg.StartupSync {
-			if sync.Filename != targetSubPath {
-				newSync = append(newSync, sync)
-			}
-		}
-		newSync = append(newSync, config.RemoteSync{
-			URL:      req.URL,
-			Filename: targetSubPath,
-		})
-		h.cfg.StartupSync = newSync
-		h.cfg.Mu.Unlock()
-		if err := h.cfg.Save(h.cfgPath); err != nil {
-			http.Error(w, "Synced successfully, but config save failed", http.StatusInternalServerError)
+		if err := registry.AddStartupSync(req.URL, targetSubPath); err != nil {
+			http.Error(w, "Synced successfully, but database save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -210,14 +189,14 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Successfully synced to data/" + targetSubPath))
 }
 
-// ... other existing functions (adminConfig, adminRemove) remain unchanged ...
-// --- SECURE DASHBOARD ENDPOINTS ---
-
 func (h *handler) adminConfig(w http.ResponseWriter, r *http.Request) {
+	list, err := registry.ListStartupSync()
+	if err != nil {
+		http.Error(w, "Failed to read startup sync list", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	h.cfg.Mu.RLock()
-	defer h.cfg.Mu.RUnlock()
-	json.NewEncoder(w).Encode(h.cfg.StartupSync)
+	json.NewEncoder(w).Encode(list)
 }
 
 func (h *handler) adminRemove(w http.ResponseWriter, r *http.Request) {
@@ -235,33 +214,19 @@ func (h *handler) adminRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Remove from the Config Array
-	h.cfg.Mu.Lock()
-	var newSync []config.RemoteSync
-	for _, sync := range h.cfg.StartupSync {
-		if sync.Filename != req.Filename {
-			newSync = append(newSync, sync)
-		}
-	}
-	h.cfg.StartupSync = newSync
-	h.cfg.Mu.Unlock()
-
-	// 2. Save Config to Disk
-	if err := h.cfg.Save(h.cfgPath); err != nil {
-		http.Error(w, "Failed to save configuration", http.StatusInternalServerError)
+	if err := registry.RemoveStartupSync(req.Filename); err != nil {
+		http.Error(w, "Failed to remove from database", http.StatusInternalServerError)
 		return
 	}
 
-	// 3. CONDITIONALLY Delete the physical target directory or file safely
 	if req.DeleteLocalFiles {
 		safeName := filepath.Clean(req.Filename)
 		if safeName != "." && safeName != "" && !strings.HasPrefix(safeName, "..") && !filepath.IsAbs(safeName) {
 			fullRemovalPath := filepath.Join(h.store.DataDir(), safeName)
-			os.RemoveAll(fullRemovalPath) // Cleans folders and files instantly
+			os.RemoveAll(fullRemovalPath)
 		}
 	}
 
-	// 4. Hot-reload the engine so it updates the UI mapping
 	h.store.Reload()
 
 	w.WriteHeader(http.StatusOK)

@@ -1,0 +1,111 @@
+<!-- sub1.html — second-level hub (sub-cards + article list with verify badges)
+     DEMO renders client-side. NOTE on the new rule: a hub only renders while a
+     branch has NO markdown anywhere, so in practice sub1 shows the pure-hub
+     drill-down. The article-list block is kept (faithful to the original
+     template) for edge cases / when templateSwitchDepth changes. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>R.E.D. Engine</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    {{if .DevMode}}
+    <script type="module" src="/@vite/client"></script>
+    <script type="module" src="/src/main.js"></script>
+    {{else}}
+    <link rel="stylesheet" href="/static/dist/main.css">
+    {{end}}
+</head>
+<body class="bg-paper-white text-ink-black">
+
+    <!-- Fixed Navbar -->
+    <nav class="fixed left-0 top-0 z-50 h-16 w-full border-b border-sovereign-hover bg-sovereign text-white shadow-[0_2px_8px_rgba(0,0,0,0.35)]">
+        <div class="mx-auto flex h-full max-w-[1400px] items-center justify-between gap-4 px-6">
+            <a href="main.html" class="whitespace-nowrap font-serif text-[1.625rem] font-bold uppercase tracking-[0.06em] text-white no-underline transition-opacity hover:opacity-80">R.E.D. ENGINE</a>
+            <div class="relative w-[280px] max-[640px]:w-[180px]">
+                <input id="search-input" type="text" placeholder="Search articles…" autocomplete="off"
+                    class="w-full rounded border border-white/25 bg-white/10 py-1.5 pl-3 pr-10 font-sans text-[0.8125rem] text-white outline-none transition placeholder:text-white/50 focus:border-white/55 focus:bg-white/20">
+                <span class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-[0.2rem] border border-white/20 bg-white/10 px-1.5 py-0.5 font-sans text-[0.65rem] text-white/45 max-[640px]:hidden">⌘K</span>
+                <div id="search-results" class="hidden absolute left-0 right-0 top-[calc(100%+6px)] z-[60] max-h-[22rem] overflow-y-auto rounded border border-paper-border bg-paper-white shadow-[0_4px_18px_rgba(0,0,0,0.22)]"></div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="mt-16 min-h-[calc(100vh-4rem)] bg-paper-white px-8 py-10 max-[768px]:px-4 max-[768px]:py-6">
+        <div id="hub-root" class="mx-auto max-w-[1140px]"></div>
+    </main>
+
+    <script src="red-data.js"></script>
+    <script src="red-search.js"></script>
+    <script>
+        (function renderSubHub() {
+            const R = window.RED;
+            const path = new URLSearchParams(location.search).get('path') || '';
+            const sec = R.getSection(path) || R.TREE;
+            const root = document.getElementById('hub-root');
+
+            const trail = R.crumbs(path).map(c =>
+                `<span class="text-paper-border">/</span><a href="${c.path}" class="text-ink-muted no-underline transition-colors hover:text-sovereign">${c.label}</a>`
+            ).join('');
+            const crumbHtml = `<div class="mb-6 flex flex-wrap items-center gap-1.5 font-sans text-[0.8125rem] font-medium text-ink-muted [&_a]:whitespace-nowrap">
+                <a href="main.html" class="text-ink-muted no-underline transition-colors hover:text-sovereign">Home</a>${trail}</div>`;
+
+            // optional sub-cards
+            const subKeys = Object.keys(sec.sub);
+            let cardsHtml = '';
+            if (subKeys.length) {
+                cardsHtml = `<div class="mb-8 grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-5">` +
+                    subKeys.map(k => {
+                        const child = sec.sub[k];
+                        const childPath = `${path}/${k}`;
+                        const cover = child.cover
+                            ? `<div class="relative h-[120px] overflow-hidden bg-sovereign"><div class="absolute inset-0 opacity-[0.18] [background-image:repeating-linear-gradient(45deg,#fff_0,#fff_1px,transparent_1px,transparent_11px)]"></div></div>`
+                            : `<div class="h-[120px] border-b border-paper-border bg-paper-light"></div>`;
+                        const count = R.articleCount(child);
+                        return `<a href="${R.destinationFor(childPath)}" class="hub-card">
+                            ${cover}
+                            <div class="flex flex-1 flex-col p-5">
+                                <div class="mb-2 font-serif text-[1.375rem] font-bold leading-tight text-ink-black">${R.humanize(child.name)}</div>
+                                <div class="mt-auto flex items-center justify-between font-sans text-xs font-medium">
+                                    <span class="whitespace-nowrap text-ink-muted">${count} ${count === 1 ? 'guide' : 'guides'}</span>
+                                    <span class="font-bold text-sovereign">→</span>
+                                </div>
+                            </div>
+                        </a>`;
+                    }).join('') + `</div>`;
+            }
+
+            // article list with verification badges
+            let listHtml = '';
+            if (sec.articles && sec.articles.length) {
+                listHtml = `<div class="mt-6">` + sec.articles.map(a => {
+                    const badge = a.verification === 'verified'
+                        ? `<span class="shrink-0 rounded-[0.2rem] border border-[#86efac] bg-[#f0fdf4] px-1.5 py-0.5 font-sans text-[0.65rem] font-bold text-[#15803d]">✓</span>` : '';
+                    return `<a href="article.html?path=${encodeURIComponent(path + '/' + a.slug)}"
+                        class="mb-2 flex items-center justify-between gap-4 rounded border border-paper-border bg-white px-[1.125rem] py-3.5 no-underline transition-colors hover:border-paper-hover hover:bg-paper-light">
+                        <div class="flex min-w-0 flex-1 items-center gap-2.5">
+                            <span class="font-serif text-[1.2rem] font-semibold text-ink-black">${a.title}</span>${badge}
+                        </div>
+                        <span class="shrink-0 font-bold text-sovereign">→</span>
+                    </a>`;
+                }).join('') + `</div>`;
+            }
+
+            const empty = (!subKeys.length && !(sec.articles && sec.articles.length))
+                ? `<p class="mt-8 italic text-ink-muted">No content yet.</p>` : '';
+
+            root.innerHTML = `${crumbHtml}
+                <h1 class="mb-6 font-serif text-[2.5rem] font-bold leading-[1.2] text-ink-black">${sec.name}</h1>
+                ${cardsHtml}${listHtml}${empty}`;
+        })();
+    </script>
+
+    <!-- Attribution required by NOTICE (AGPL-3.0 §7(b)) — do not remove. -->
+    <footer style="padding:1.25rem;text-align:center;font-family:'Public Sans',system-ui,sans-serif;font-size:0.75rem;color:var(--color-ink-muted,#6b6b6b);border-top:1px solid var(--color-paper-border,#e5e0d8)">
+        Powered by <a href="https://github.com/RED-Collective" target="_blank" rel="noopener" style="color:var(--color-sovereign,#740010);font-weight:600;text-decoration:underline">RED Collective</a>.
+    </footer>
+</body>
+</html>

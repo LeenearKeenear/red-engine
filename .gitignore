@@ -1,16 +1,20 @@
 // DO NOT REMOVE
 
 red-engine
-red
+!cmd/red
 
 data/
-test-integrity.sh
-fix-ports.sh
-
+data1/
+.nodetest/
+registry.db
 .github/discord.yml
 podman-flush.sh
 
 
+Project-RED-main.zip
+node_modules/
+tmp/
+internal/router/static/dist/
 
 .DS_Store
 Thumbs.db
@@ -18,3 +22,14 @@ Thumbs.db
 .vscode/
 .idea/
 
+.env
+*.log
+*.bak
+*.tmp
+*.md
+*.txt
+
+!*.sh
+!README.md
+!LICENSE
+.claude

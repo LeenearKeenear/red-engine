@@ -1,0 +1,158 @@
+<!-- templates/main.html — top-level hub page (card grid, no sidebar) -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ .Site }}{{ if .Title }} — {{ .Title }}{{ end }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    {{if .DevMode}}
+    <script type="module" src="/@vite/client"></script>
+    <script type="module" src="/src/main.js"></script>
+    {{else}}
+    <link rel="stylesheet" href="/static/dist/main.css">
+    {{end}}
+</head>
+<body>
+
+    <!-- Fixed Navbar -->
+    <nav class="navbar">
+        <div class="navbar-container">
+            <a href="/" class="site-title">{{ .Site }}</a>
+            <div class="search-wrapper">
+                <input type="text" id="search-input" placeholder="Search articles…" autocomplete="off">
+                <span class="search-kbd-hint">⌘K</span>
+                <div id="search-results" class="search-results hidden"></div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hub content — full width, no sidebar -->
+    <main class="hub-page">
+        <div class="hub-container">
+
+            <!-- Breadcrumbs -->
+            {{ if .Crumb }}
+            <div class="breadcrumbs">
+                <a href="/">Home</a>
+                {{ range .Crumb }}
+                <span class="separator">/</span>
+                <a href="{{ .Path }}">{{ .Label }}</a>
+                {{ end }}
+            </div>
+            {{ end }}
+
+            <h1 class="page-title">{{ .Title }}</h1>
+
+            <!-- Subsection cards -->
+            {{ if .Section }}
+            {{ $subs := sortedSubs .Section.Sub }}
+            {{ if $subs }}
+            <div class="hub-card-grid">
+                {{ range $subs }}
+                <a href="{{ .Path }}" class="hub-card">
+                    {{ if .HasCover }}
+                    <div class="hub-card-cover" style="background-image: url('/-/branch-meta{{ .Path }}/cover.jpg');"></div>
+                    {{ else }}
+                    <div class="hub-card-cover-default"></div>
+                    {{ end }}
+                    <div class="hub-card-body">
+                        <div class="hub-card-title">{{ humanize .Name }}</div>
+                        <div class="hub-card-footer">
+                            <span class="hub-card-count">{{ articleCount . }} guides</span>
+                            <span class="hub-card-arrow">→</span>
+                        </div>
+                    </div>
+                </a>
+                {{ end }}
+            </div>
+            {{ end }}
+
+            <!-- Direct articles in this section (if any) -->
+            {{ if .Section.Articles }}
+            <div class="article-list" style="margin-top:2rem;">
+                <h2 style="font-family:'EB Garamond',Georgia,serif; font-size:1.4rem; font-weight:700; margin-bottom:1rem; color:var(--ink-black);">Articles</h2>
+                {{ range .Section.Articles }}
+                <a href="{{ .Path }}" class="article-list-item">
+                    <span class="article-list-title">{{ .Title }}</span>
+                    <span class="article-list-arrow">→</span>
+                </a>
+                {{ end }}
+            </div>
+            {{ end }}
+
+            {{ if not .Section.Articles }}
+            {{ if not (sortedSubs .Section.Sub) }}
+            <p style="color:var(--ink-muted); font-style:italic; margin-top:2rem;">No content yet.</p>
+            {{ end }}
+            {{ end }}
+
+            {{ end }}
+        </div>
+    </main>
+
+    <script>
+        let searchIndex = [];
+        fetch('/-/search-index.json')
+            .then(res => res.json())
+            .then(data => { searchIndex = data; })
+            .catch(err => console.error('Failed to load search index', err));
+
+        const searchInput      = document.getElementById('search-input');
+        const resultsContainer = document.getElementById('search-results');
+
+        function escapeHtml(str) {
+            if (str == null) return '';
+            return str.replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+        }
+
+        function runSearch(query) {
+            if (query.length < 2) {
+                resultsContainer.classList.add('hidden');
+                resultsContainer.innerHTML = '';
+                return;
+            }
+            const matches = searchIndex.filter(item =>
+                item.title.toLowerCase().includes(query) ||
+                item.path.toLowerCase().includes(query)
+            ).slice(0, 10);
+
+            if (matches.length === 0) {
+                resultsContainer.innerHTML = '<div class="search-no-results">No results found</div>';
+            } else {
+                resultsContainer.innerHTML = matches.map(item =>
+                    `<a href="${item.path}" class="search-result-item">${escapeHtml(item.title)}</a>`
+                ).join('');
+            }
+            resultsContainer.classList.remove('hidden');
+        }
+
+        if (searchInput) {
+            searchInput.addEventListener('input', e => runSearch(e.target.value.trim().toLowerCase()));
+            document.addEventListener('click', e => {
+                if (!searchInput.contains(e.target) && !resultsContainer.contains(e.target)) {
+                    resultsContainer.classList.add('hidden');
+                }
+            });
+            document.addEventListener('keydown', e => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+                    e.preventDefault();
+                    searchInput.focus();
+                    searchInput.select();
+                }
+                if (e.key === 'Escape') {
+                    resultsContainer.classList.add('hidden');
+                    searchInput.blur();
+                }
+            });
+        }
+    </script>
+
+    <!-- Attribution required by NOTICE (AGPL-3.0 §7(b)) — do not remove. -->
+    <footer style="padding:1.25rem;text-align:center;font-family:'Public Sans',system-ui,sans-serif;font-size:0.75rem;color:var(--color-ink-muted,#6b6b6b);border-top:1px solid var(--color-paper-border,#e5e0d8)">
+        Powered by <a href="https://github.com/RED-Collective" target="_blank" rel="noopener" style="color:var(--color-sovereign,#740010);font-weight:600;text-decoration:underline">RED Collective</a>.
+    </footer>
+</body>
+</html>
