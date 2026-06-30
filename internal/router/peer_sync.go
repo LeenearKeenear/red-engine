@@ -48,7 +48,12 @@ func (h *handler) pullFromPeer(peerURL, remotePath, destDir string) error {
 
 	// 4. Download every file listed in the manifest
 	for relPath := range manifest.Files {
-		fileURL := peerURL + "/content/" + remotePath + "/" + relPath
+		cleanRel := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(relPath)), "/")
+		if cleanRel == "" || strings.HasPrefix(cleanRel, "..") {
+			return fmt.Errorf("security violation: manifest contains path traversal attempt: %s", relPath)
+		}
+		
+		fileURL := peerURL + "/content/" + remotePath + "/" + cleanRel
 		fileResp, err := http.Get(fileURL)
 		if err != nil {
 			return fmt.Errorf("failed to download %s: %w", relPath, err)
@@ -58,7 +63,7 @@ func (h *handler) pullFromPeer(peerURL, remotePath, destDir string) error {
 			return fmt.Errorf("file %s returned HTTP %d", relPath, fileResp.StatusCode)
 		}
 
-		localPath := filepath.Join(destDir, relPath)
+		localPath := filepath.Join(destDir, filepath.FromSlash(cleanRel))
 		if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
 			return err
 		}
