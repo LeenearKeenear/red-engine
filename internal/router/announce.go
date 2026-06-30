@@ -216,7 +216,7 @@ func AnnounceURLToPeer(peer registry.Peer, publicURL string) error {
 		return fmt.Errorf("node identity not initialised")
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := fetch.SafeClient()
 
 	// Step 1: request a fresh nonce.
 	chalBody, _ := json.Marshal(challengeRequest{PublicKey: pubKey})
