@@ -150,7 +150,7 @@ func (h *handler) importRemote(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		httpReq.Header.Set("User-Agent", "RED-Engine-Sync/1.0")
-		client := &http.Client{Timeout: 15 * time.Second}
+		client := fetch.SafeClient()
 		resp, err := client.Do(httpReq)
 		if err != nil {
 			http.Error(w, "Failed to connect to remote server", http.StatusBadGateway)
