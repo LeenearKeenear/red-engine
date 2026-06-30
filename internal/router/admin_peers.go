@@ -35,7 +35,7 @@ func FetchNodeInfo(baseURL string) (*nodeInfoResponse, error) {
 	}
 	url := strings.TrimSuffix(baseURL, "/") + "/-/nodeinfo"
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := fetch.SafeClient()
 	resp, err := client.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to peer: %w", err)
@@ -140,7 +140,7 @@ func (h *handler) checkPeerHealth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := fetch.SafeClient()
 	resp, err := client.Get(strings.TrimSuffix(req.URL, "/") + "/-/nodeinfo")
 	if err != nil || resp.StatusCode != http.StatusOK {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -157,7 +157,7 @@ func (h *handler) checkPeerHealthHandler(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "missing url parameter", http.StatusBadRequest)
 		return
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := fetch.SafeClient()
 	resp, err := client.Get(strings.TrimSuffix(peerURL, "/") + "/-/nodeinfo")
 	status := "down"
 	if err == nil && resp.StatusCode == http.StatusOK {
@@ -297,7 +297,7 @@ func importPeerGossip(peerURL string) {
 	}
 	endpoint := strings.TrimSuffix(base, "/") + "/-/peers"
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := fetch.SafeClient()
 	resp, err := client.Get(endpoint)
 	if err != nil {
 		log.Printf("[Gossip] fetch %s: %v", endpoint, err)
